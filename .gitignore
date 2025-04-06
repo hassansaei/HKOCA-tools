@@ -1,0 +1,6 @@
+
+ __pycachche__/
+*.log
+*.sif
+.env
+adata/
