@@ -1,6 +1,6 @@
 
- __pycachche__/
+ __pycache__/
 *.log
 *.sif
 .env
-adata/
+data/
