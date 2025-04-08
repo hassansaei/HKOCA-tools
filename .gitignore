@@ -3,5 +3,7 @@
 *.log
 *.sif
 .env
-data/
+data/data_loader/
+data/processed/
+data/cellXgene/
 containers/
