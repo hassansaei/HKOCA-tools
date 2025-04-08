@@ -7,3 +7,4 @@ data/data_loader/
 data/processed/
 data/cellXgene/
 containers/
+.DS_Store
