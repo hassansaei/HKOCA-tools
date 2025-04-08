@@ -4,3 +4,4 @@
 *.sif
 .env
 data/
+containers/
