@@ -198,4 +198,4 @@ if __name__ == "__main__":
 
     # Save the filtered AnnData object
     print("Saving filtered data")
-    adata_filtered.write('/out/data/processed/HKOCA_concatenated_harmonized_processed_filtered.h5ad')
+    adata_filtered.write('/mnt/data/processed/HKOCA_concatenated_harmonized_processed_filtered.h5ad')
