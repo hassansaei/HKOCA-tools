@@ -46,9 +46,9 @@ def parse_filter_params(path, adata, dataset):
     """
     df = pd.read_csv(path, sep=",", header=0, index_col=0)
     # check that the columns are in the right format
-    columns = ["n_genes_by_count_min", "n_genes_by_count_max","total_counts_min ","total_counts_max"]
+    columns = ["n_genes_by_count_min", "n_genes_by_count_max","total_counts_min","total_counts_max"]
     if not all(col in df.columns for col in columns):
-        raise ValueError("The filter parameters file must contain the columns: dataset, min_genes, max_genes, min_counts, max_counts")
+        raise ValueError(f"The filter parameters file must contain the columns: {columns}")
     # check that the index contains all the datasets from adata
     if not all(dts in adata.obs[dataset].unique() for dts in df.index):
         raise ValueError("The filter parameters file must contain all the datasets from adata")
@@ -137,18 +137,48 @@ def plot_qc_metrics(adata, dataset: str, dataset_name: str, filtered = False, pr
         plt.savefig(f'/out/qc/{dataset_name}_{prefix}_unfiltered_umap_gene_count.png')
     plt.close()
 
+#Function that will select in loop the datasets and filter them and outputs the filtered adata file which conatins all the datasets
+def filter_adata(adata, dataset: str, filter_params: pd.DataFrame):
+    """
+    Filter cells based on the number of genes and counts for all datasets.
+    
+    Parameters:
+    - adata: AnnData object
+    - dataset: Dataset type (e.g.,'sample', 'study')
+    - filter_params: DataFrame containing filter parameters for each dataset
+    """
+    filtered_adata_list = []
+    for dataset_name in adata.obs[dataset].unique():
+        print(f"Saving dataset: {dataset_name}")
+        # Get filter parameters for the current dataset
+        min_genes = filter_params.loc[dataset_name, 'n_genes_by_count_min']
+        max_genes = filter_params.loc[dataset_name, 'n_genes_by_count_max']
+        min_counts = filter_params.loc[dataset_name, 'total_counts_min']
+        max_counts = filter_params.loc[dataset_name, 'total_counts_max']
+
+        # Filter cells
+        filtered_adata = filter_cells(adata, dataset, dataset_name, min_genes, max_genes, min_counts, max_counts)
+        filtered_adata_list.append(filtered_adata)
+    # Concatenate all filtered datasets
+    adata_updated = sc.concat(filtered_adata_list, join="outer", label=dataset)   
+    return adata_updated 
+        
+    
+
 
 if __name__ == "__main__":
     args = parse_args()
+    print("loading data")
     adata = sc.read_h5ad(args.h5ad)
     # Calculate QC metrics
     calculate_stat(adata)
     dataset = 'study'
 
     # Parse filter parameters
-    filter_params = parse_filter_params(args.params, adata, 'study', 'dataset_name')
+    filter_params = parse_filter_params(args.params, adata, 'study')
 
     for dataset_name in adata.obs[dataset].unique():
+        print(f"Filtering dataset: {dataset_name}")
         # Get filter parameters for the current dataset
         min_genes = filter_params.loc[dataset_name, 'n_genes_by_count_min']
         max_genes = filter_params.loc[dataset_name, 'n_genes_by_count_max']
@@ -162,3 +192,10 @@ if __name__ == "__main__":
         # Plot QC metrics
         plot_qc_metrics(filtered_adata, dataset, dataset_name, filtered=True, prefix='processed')
         plot_qc_metrics(unfiltered_adata, dataset, dataset_name, filtered=False, prefix='processed')
+        # create a filtered adata object
+    
+    adata_filtered = filter_adata(adata, dataset, filter_params)
+
+    # Save the filtered AnnData object
+    print("Saving filtered data")
+    adata_filtered.write('/out/data/processed/HKOCA_concatenated_harmonized_processed_filtered.h5ad')
