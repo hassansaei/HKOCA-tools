@@ -1,0 +1,19 @@
+﻿Study,Filter in paper,n_genes_by_count_min,n_genes_by_count_max,total_counts_min,total_counts_max
+d10_1016_j_celrep_2020_108514,>1000 and <4000 gene count,1000,4000,1000,12500
+d10_1016_j_devcel_2019_06_001,None,1200,5000,0,22500
+d10_1016_j_stem_2018_04_022,>500 and <4000,500,4000,0,7500
+d10_1016_j_stem_2018_10_010,>500 and <4000,500,4000,0,7500
+d10_1016_j_stem_2019_06_009,"total genes expressed between 200 and 7000, as well as number of detected unique molecules < 50,000",1000,7000,2500,35000
+d10_1016_j_stem_2022_06_005,"500 and 5,500 features, fewer than 20,000 counts",500,4500,0,15000
+d10_1038_s41467_019_13382_0,"minimum mapped UMIs of 1000, summarizing to at least 200 genes",200,4000,1000,5000
+d10_1038_s41467_022_33623_z,"number of genes per cell greater than 500 and the number of UMIs less than 100,000",2000,7000,4000,35000
+d10_1038_s41563_020_00853_9,None,1000,6000,2500,20000
+d10_1038_s41592_018_0253_2,oor-quality cells were defined as those that had more than 95% zeros across the cells,1000,6000,0,30000
+d10_1093_stmcls_sxac009,None,700,5000,1000,10000
+d10_1172_jci_insight_122697,"Cells expressing <500 or >4,000 genes",500,4000,0,10000
+d10_1186_s13073_022_01023_z,more than 1500 genes ,1500,6500,0,25000
+d10_1242_dev_172361,None,1500,6000,5000,25000
+d10_1242_dev_200198,cells were filtered out containing <200 or >3000 features ,1000,6000,4000,25000
+d10_15252_embr_201847483,"filtered Cells with more than 125,000 UMIs, < 500 genes expressed, ",1500,6000,3500,25000
+dno_doi_kidney_organoid_2024_GSE147393,None,1500,7000,4000,35000
+dno_doi_kidney_organoid_LMRH,None,1250,7500,2500,35000
