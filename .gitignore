@@ -4,3 +4,5 @@
 *.sif
 .env
 data/
+containers/
+.DS_Store
