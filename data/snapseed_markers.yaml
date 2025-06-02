@@ -1,0 +1,81 @@
+# Kidney organoid cell types and markers
+Nephron:
+  marker_genes: [NPHS1, NPHS2, EPCAM, CHD6, GATA3, COL3A1, CLDN1, CLDN10]
+  subtypes:
+    Nephron_progenitor_cells:
+      marker_genes: [LYPD1, DAPL1, SIX2, CITED1, PCNA]
+    Early_nephron:
+      marker_genes: [TOP2A, LAMP5, WNT4, CENPF]
+    Podocytes:
+      marker_genes: [NPHS1, NPHS2, MAFB, PODXL, TCF21, WT1]
+      subtypes:
+        Early_podocyte:
+          marker_genes: [NPHS1, NPHS2, MAFB, OLFM3]
+        Late_podocyte: 
+          marker_genes: [DDN, NTNG1, TEAD3, TEAD4, FOXP1]
+    Parietal_epithelial_like_cells:
+      marker_genes: [CLDN1, CDH6, DAPL1]
+    Proximal_tubule:
+      marker_genes: [CUBN, CDH6, LRP2]
+      subtypes:
+        Dev_PT:
+          marker_genes: [CLEC18B, SLC27A2, CDH6, HNF4A, IGFBP7]
+        PT:
+          marker_genes: [SLC34A1, SLC6A19, SLC22A6, AQP1, SLC3A1, CLDN2]
+    LOH:
+      marker_genes: [SLC12A1, UMOD, CLDN10, POU3F3, IRX1]
+    Distal_tubule:
+      marker_genes: [MAL, POU3F3, CALB1, SLC12A3, TMEM207, HNF1B, IRX5]
+      subtypes:
+        Dev_DT:
+          marker_genes: [POU3F3, JAG1]
+        DT:
+          marker_genes: [MAL, GATA3, SLC14A2, CLDN4, CLDN3, TCF4, TFAP2A]
+    developing_tubule:
+      marker_genes: [SIM1, TFAP2B]
+Ureteric_buds:
+  marker_genes: [RET, GATA3, UPK2]
+  subtypes:
+    Ureteric_tip_cells:
+      marker_genes: [RET]
+    Ureteric_outer_stalk:
+      marker_genes: [CALB1, GATA3, AQP2]
+    Ureteric_inner_stalk:
+      marker_genes: [TACSTD2, UPK2]
+Stroma:
+  marker_genes: [COL1A1, COL1A2, PDGFRA, PDGFRB]
+  subtypes:
+    Stroma_progenitors:
+      marker_genes: [NOTCH2, FOXD1]
+    Cortical stroma:
+      marker_genes: [MEG3]
+    Mdullary_stroma:
+      marker_genes: [DCN]
+    Mesangial_cells:
+      marker_genes: [COL1A1, COL1A2, PDGFRB, COL14A1]
+Proliferating_cells:
+  marker_genes: [CENPF, UBE2C, PCLAF, TYMS]
+  subtypes:
+    Proliferating_epithelial_cells:
+        marker_genes: [EPCAM, PAX8, KRT19, TYMS, HMGB2]
+    Proliferating_stromal_cells:
+        marker_genes: [CENPF, HMGB2, COL3A1, COL1A1]
+Endothelial_cells:
+  marker_genes: [KDR, CAV1, SOX17]
+  subtypes:
+    Early_endotelium:
+      marker_genes: [KDR, GNG11]
+    Edothelium:
+      marker_genes: [PECAM1, CDH5, ESM1]
+Off_terget_cells:
+  marker_genes: [HES6, STMN2, MYOG, FABP7]
+  subtypes:
+    Neural_progenitor_cells:
+      marker_genes: [HES6, STMN2]
+    Muscle_progenitor_cells:
+      marker_genes: [MYOG, MYOD1]
+    Glial_cells:
+      marker_genes: [FABP7, TTYH1, SOX2]
+
+# All markers in one unqiue list 
+# all_markers: []
