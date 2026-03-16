@@ -432,11 +432,21 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
             f"File: {csv_path!r}"
         )
 
+    # Require unique data_path
+    path_series = df["data_path"].astype(str).str.strip()
+    path_dups = path_series[path_series.duplicated(keep=False)]
+    if not path_dups.empty:
+        dup_paths = sorted(path_dups.unique().tolist())
+        raise ValueError(
+            f"CSV has duplicate data_path: {dup_paths[:5]}{'...' if len(dup_paths) > 5 else ''}\n"
+            f"File: {csv_path!r}"
+        )
+
     # Require unique sample_id
-    dup = df["sample_id"].astype(str).str.strip()
-    duplicated = dup[dup.duplicated(keep=False)]
-    if not duplicated.empty:
-        dup_ids = sorted(duplicated.unique().tolist())
+    id_series = df["sample_id"].astype(str).str.strip()
+    id_dups = id_series[id_series.duplicated(keep=False)]
+    if not id_dups.empty:
+        dup_ids = sorted(id_dups.unique().tolist())
         raise ValueError(
             f"CSV has duplicate sample_id: {dup_ids}\n"
             f"File: {csv_path!r}"
