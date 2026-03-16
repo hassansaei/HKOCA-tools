@@ -8,31 +8,29 @@ the 24,100 protein-coding + lncRNA genes from GRCh38.104.
 
 Usage
 -----
-    python harmonize_pipeline.py [--csv PATH] [--gtf PATH] [--output PATH] [--summary]
+    python harmonize.py [-w DIR] [--csv PATH] [--gtf PATH] [--output PATH] [--summary]
 
-All arguments are optional — defaults are read from the USER CONFIG section below,
-or from environment variables:
-    METADATA_CSV   path to the metadata CSV
-    GTF_FILE       path to the Ensembl GRCh38.104 GTF
-    DATA_ROOT      working directory (relative CSV paths resolve from here)
+Only GTF path is in harmonize.config (stable). CSV and output are user-provided (--csv, --output or env):
+    METADATA_CSV   path to the metadata CSV (first column = path to each sample)
+    GTF_FILE       path to the Ensembl GRCh38.104 GTF (or set in config)
     OUTPUT_ROOT    where to write output h5ad files
+    WORKING_DIR   working directory; CSV path and data_path in CSV are relative to this
+Relative paths in the CSV’s first column are relative to working dir (see --working-dir).
 
 Examples
 --------
-    # Use defaults from USER CONFIG
-    python harmonize_pipeline.py
+    # Working dir + CSV + output (paths relative to -w)
+    python harmonize.py -w /path/to/data --csv metadata/samples.csv --output results
 
-    # Override CSV and output dir on the command line
-    python harmonize_pipeline.py --csv my_datasets.csv --output /data/results
-
-    # Run pipeline then generate summary plots
-    python harmonize_pipeline.py --summary
+    # Override GTF and generate summary plots
+    python harmonize.py -w /path/to/data --csv samples.csv --output results --summary
 """
 
 import os
 import sys
 import gzip
 import argparse
+import configparser
 import collections
 import warnings
 import traceback
@@ -53,28 +51,103 @@ anndata.settings.allow_write_nullable_strings = True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# USER CONFIG — edit these four paths, or set them as environment variables
+# CONFIG — harmonize.config (same dir as script) or --config PATH. CLI and env override.
 # ══════════════════════════════════════════════════════════════════════════════
 
-DATA_ROOT = os.environ.get(
-    "DATA_ROOT",
-    "/data-master/pure-workspace/labss/hmami/new_data/data",
-)
+CONFIG_FILENAME = "harmonize.config"
 
-GTF_FILE = os.environ.get(
-    "GTF_FILE",
-    "/data-master/pure-workspace/labss/hmami/new_data/meta/gtf/Homo_sapiens.GRCh38.104.gtf",
-)
+# Fallbacks only when user does not pass --csv / --output or set env (metadata_csv and output_root are user-provided)
+_GTF_FILE = "/data-master/pure-workspace/labss/hmami/new_data/meta/gtf/Homo_sapiens.GRCh38.104.gtf"
+_METADATA_CSV = "/data-master/pure-workspace/labss/hmami/new_data/notebooks/data_loaders/datasets_metadata.csv"
+_OUTPUT_ROOT = "/data-master/pure-workspace/labss/hmami/new_data/notebooks/data_loaders/CSV_driven_results"
 
-METADATA_CSV = os.environ.get(
-    "METADATA_CSV",
-    "/data-master/pure-workspace/labss/hmami/new_data/notebooks/data_loaders/datasets_metadata.csv",
-)
 
-OUTPUT_ROOT = os.environ.get(
-    "OUTPUT_ROOT",
-    "/data-master/pure-workspace/labss/hmami/new_data/notebooks/data_loaders/CSV_driven_results",
-)
+def _config_path(cli_config: str | None) -> str:
+    """Path to config file: CLI --config, or same dir as script, or cwd."""
+    if cli_config and cli_config.strip():
+        return cli_config.strip()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    p = os.path.join(script_dir, CONFIG_FILENAME)
+    if os.path.isfile(p):
+        return p
+    return os.path.join(os.getcwd(), CONFIG_FILENAME)
+
+
+def load_config(config_path: str) -> configparser.ConfigParser:
+    """Load INI config. Returns ConfigParser with optionxform=str (preserve key case)."""
+    cfg = configparser.ConfigParser()
+    cfg.optionxform = str
+    if os.path.isfile(config_path):
+        cfg.read(config_path, encoding="utf-8")
+    return cfg
+
+
+def resolve_paths(args, cfg: configparser.ConfigParser) -> dict:
+    """
+    gtf_file: CLI > env > config. metadata_csv, output_root: CLI > env > fallback.
+    working_dir: CLI --working_dir > env WORKING_DIR > current directory (base for relative CSV path and relative data_path in CSV).
+    """
+    def get_gtf() -> str:
+        if getattr(args, "gtf", None) and str(args.gtf).strip():
+            return str(args.gtf).strip()
+        v = os.environ.get("GTF_FILE", "").strip()
+        if v:
+            return v
+        if cfg.has_section("paths") and cfg.has_option("paths", "gtf_file"):
+            v = cfg.get("paths", "gtf_file").strip()
+            if v:
+                return v
+        return _GTF_FILE
+
+    def get_user_path(cli_val, env_key: str, fallback: str) -> str:
+        if cli_val is not None and str(cli_val).strip():
+            return str(cli_val).strip()
+        v = os.environ.get(env_key, "").strip()
+        return v or fallback
+
+    working_dir = get_user_path(getattr(args, "working_dir", None), "WORKING_DIR", os.getcwd())
+    if not os.path.isabs(working_dir):
+        working_dir = os.path.abspath(working_dir)
+
+    return {
+        "gtf_file":     get_gtf(),
+        "metadata_csv": get_user_path(getattr(args, "csv", None), "METADATA_CSV", _METADATA_CSV),
+        "output_root":  get_user_path(getattr(args, "output", None), "OUTPUT_ROOT", _OUTPUT_ROOT),
+        "working_dir":  working_dir,
+    }
+
+
+def get_summary_options(cfg: configparser.ConfigParser) -> dict:
+    """Read [summary] options from config; return dict with defaults for missing keys."""
+    defaults = {
+        "figure_dpi": 300,
+        "figure_extensions": ["png", "pdf"],
+        "report_subdir": "reports/atlas_summary",
+        "age_plot_top_n": 15,
+    }
+    if not cfg.has_section("summary"):
+        return defaults
+    out = dict(defaults)
+    if cfg.has_option("summary", "figure_dpi"):
+        try:
+            out["figure_dpi"] = cfg.getint("summary", "figure_dpi")
+        except ValueError:
+            pass
+    if cfg.has_option("summary", "figure_extensions"):
+        raw = cfg.get("summary", "figure_extensions").strip()
+        if raw:
+            out["figure_extensions"] = [x.strip() for x in raw.split(",") if x.strip()] or defaults["figure_extensions"]
+    if cfg.has_option("summary", "report_subdir"):
+        v = cfg.get("summary", "report_subdir").strip()
+        if v:
+            out["report_subdir"] = v
+    if cfg.has_option("summary", "age_plot_top_n"):
+        try:
+            out["age_plot_top_n"] = cfg.getint("summary", "age_plot_top_n")
+        except ValueError:
+            pass
+    return out
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -91,7 +164,7 @@ def load_allowed_genes(gtf_path: str) -> set:
     if not os.path.exists(gtf_path):
         raise FileNotFoundError(
             f"GTF file not found: {gtf_path!r}\n"
-            "Set GTF_FILE in USER CONFIG or via environment variable.\n"
+            "Set gtf_file in harmonize.config or GTF_FILE env var, or pass --gtf.\n"
             "Download from:\n"
             "  https://ftp.ensembl.org/pub/release-104/gtf/homo_sapiens/"
             "Homo_sapiens.GRCh38.104.gtf.gz"
@@ -220,16 +293,19 @@ META_COLS = [
 ]
 
 
-def load_sample(row: pd.Series) -> sc.AnnData:
+def load_sample(row: pd.Series, working_dir: str | None = None) -> sc.AnnData:
     """
     Load one sample from a CSV metadata row.
     Auto-detects format from data_path:
         .h5ad  → read_h5ad
         .h5    → read_h5_safe (10x H5)
         folder → read_mtx_safe (MTX triplet, with optional prefix)
+    If data_path is relative, it is resolved against working_dir (where data is stored).
     Returns AnnData with all metadata columns attached to obs.
     """
-    path      = str(row["data_path"]).strip()
+    path = str(row["data_path"]).strip()
+    if working_dir and not os.path.isabs(path):
+        path = os.path.normpath(os.path.join(working_dir, path))
     prefix    = str(row.get("file_prefix", "") or "").strip()
     if prefix.lower() in ("nan", "none"):
         prefix = ""
@@ -369,9 +445,10 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_pipeline(metadata_csv: str, gtf_file: str,
-                 output_root: str) -> list:
+                 output_root: str, working_dir: str) -> list:
     """
     Main pipeline loop.
+    working_dir: base for relative data_path entries in the CSV.
     Returns list of dicts describing any failures.
     """
     allowed_genes = load_allowed_genes(gtf_file)
@@ -391,17 +468,21 @@ def run_pipeline(metadata_csv: str, gtf_file: str,
         print("=" * 64)
         print(f"Processing study: {study} ({len(rows)} sample(s))")
 
-        out_dir = os.path.join(output_root, study) if output_root \
-                  else str(rows[0].get("output_dir", study)).strip() or study
+        if output_root:
+            out_dir = os.path.join(output_root, study)
+        else:
+            out_dir = str(rows[0].get("output_dir", study)).strip() or study
+            if out_dir and not os.path.isabs(out_dir):
+                out_dir = os.path.normpath(os.path.join(working_dir, out_dir))
         os.makedirs(out_dir, exist_ok=True)
         raw_h5ad        = os.path.join(out_dir, f"{study}.h5ad")
         harmonized_h5ad = os.path.join(out_dir, f"{study}_harmonized.h5ad")
 
-        # ── Load all samples
+        # ── Load all samples (relative data_path resolved against working_dir)
         adatas = []
         for row in rows:
             try:
-                adata = load_sample(row)
+                adata = load_sample(row, working_dir=working_dir)
                 adatas.append(adata)
                 print(f"  Loaded {row.get('sample_id', '?')} → {adata.shape}")
             except Exception as e:
@@ -453,7 +534,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str,
 # SUMMARY & PLOTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_summary(scan_path: str) -> None:
+def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) -> None:
     """Scan harmonized h5ad files and produce summary table + publication plots."""
     import glob
     import matplotlib
@@ -461,12 +542,13 @@ def run_summary(scan_path: str) -> None:
     import matplotlib.pyplot as plt
     import seaborn as sns
 
+    opts = get_summary_options(cfg or configparser.ConfigParser())
     sns.set_theme(style="whitegrid", context="paper", font_scale=1.35)
-    plt.rcParams["figure.dpi"]    = 300
-    plt.rcParams["savefig.dpi"]   = 300
+    plt.rcParams["figure.dpi"]    = opts["figure_dpi"]
+    plt.rcParams["savefig.dpi"]   = opts["figure_dpi"]
     plt.rcParams["savefig.bbox"]  = "tight"
 
-    report_dir = os.path.join(scan_path, "reports", "atlas_summary")
+    report_dir = os.path.join(scan_path, opts["report_subdir"])
     os.makedirs(report_dir, exist_ok=True)
 
     # ── Scan files
@@ -526,10 +608,10 @@ def run_summary(scan_path: str) -> None:
     print(df[["Study","Cells","Genes","Protocol","Age","Technology"]].head(10).to_string(index=False))
 
     def save_fig(fig, stem):
-        for ext in ("png", "pdf"):
+        for ext in opts["figure_extensions"]:
             path = os.path.join(report_dir, f"{stem}.{ext}")
             fig.savefig(path)
-        print(f"Saved figure: {os.path.join(report_dir, stem)}.png/pdf")
+        print(f"Saved figure: {os.path.join(report_dir, stem)}.{', '.join(opts['figure_extensions'])}")
 
     # ── Plot 1: cells per dataset
     plot_data = df.sort_values("Cells", ascending=True)
@@ -563,7 +645,7 @@ def run_summary(scan_path: str) -> None:
     age_top = (df.groupby("Age")["Cells"].sum()
                  .sort_values(ascending=False)
                  .reset_index()
-                 .head(15))
+                 .head(opts["age_plot_top_n"]))
     colors  = plt.cm.magma(np.linspace(0.15, 0.9, len(age_top)))
     fig, ax = plt.subplots(figsize=(12, 8))
     ax.barh(age_top["Age"][::-1], age_top["Cells"][::-1],
@@ -589,10 +671,11 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("--csv",     default=None, help="Path to metadata CSV (overrides USER CONFIG)")
-    p.add_argument("--gtf",     default=None, help="Path to GRCh38 GTF file (overrides USER CONFIG)")
-    p.add_argument("--data",    default=None, help="Data root directory (overrides USER CONFIG)")
-    p.add_argument("--output",  default=None, help="Output root directory (overrides USER CONFIG)")
+    p.add_argument("--config",  default=None, help="Path to harmonize.config (default: same dir as script)")
+    p.add_argument("--working-dir", "-w", dest="working_dir", default=None, help="Working directory; CSV path and paths in CSV are relative to this (default: cwd)")
+    p.add_argument("--csv",     default=None, help="Path to metadata CSV (relative to working dir if not absolute)")
+    p.add_argument("--gtf",     default=None, help="Path to GRCh38 GTF (overrides config/env)")
+    p.add_argument("--output",  default=None, help="Output root directory (relative to working dir if not absolute)")
     p.add_argument("--summary", action="store_true", help="Generate summary plots after pipeline")
     p.add_argument("--summary-only", action="store_true",
                    help="Skip pipeline, only generate summary plots from existing h5ad files")
@@ -602,31 +685,37 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Resolve config — CLI args > env vars > USER CONFIG defaults
-    data_root    = args.data   or DATA_ROOT
-    gtf_file     = args.gtf    or GTF_FILE
-    metadata_csv = args.csv    or METADATA_CSV
-    output_root  = args.output or OUTPUT_ROOT
+    cfg = load_config(_config_path(args.config))
+    paths = resolve_paths(args, cfg)
+    working_dir = paths["working_dir"]
+    gtf_file = paths["gtf_file"]
+    metadata_csv = paths["metadata_csv"]
+    output_root = paths["output_root"]
 
-    # Change to data root so relative paths in CSV resolve correctly
-    os.chdir(data_root)
-    print(f"Working directory : {os.getcwd()}")
-    print(f"GTF file          : {gtf_file}")
-    print(f"Metadata CSV      : {metadata_csv}")
-    print(f"Output root       : {output_root}\n")
+    # Resolve CSV and output relative to working directory
+    if metadata_csv and not os.path.isabs(metadata_csv):
+        metadata_csv = os.path.normpath(os.path.join(working_dir, metadata_csv))
+    if output_root and not os.path.isabs(output_root):
+        output_root = os.path.normpath(os.path.join(working_dir, output_root))
+
+    print(f"Working dir   : {working_dir}")
+    print(f"GTF file     : {gtf_file}")
+    print(f"Metadata CSV : {metadata_csv}")
+    print(f"Output root  : {output_root}\n")
 
     if not args.summary_only:
         failed = run_pipeline(
             metadata_csv=metadata_csv,
             gtf_file=gtf_file,
             output_root=output_root,
+            working_dir=working_dir,
         )
         if failed:
             sys.exit(1)
 
     if args.summary or args.summary_only:
         print("\nGenerating summary plots...")
-        run_summary(scan_path=output_root or ".")
+        run_summary(scan_path=output_root or ".", cfg=cfg)
 
 
 if __name__ == "__main__":
