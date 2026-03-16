@@ -573,11 +573,11 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
     report_dir = os.path.join(scan_path, opts["report_subdir"])
     os.makedirs(report_dir, exist_ok=True)
 
-    # ── Scan files
+    # ── Scan files (harmonized only; raw .h5ad have variable gene counts)
     h5ad_files = sorted(set(glob.glob(
-        os.path.join(scan_path, "**", "*.h5ad"), recursive=True
+        os.path.join(scan_path, "**", "*_harmonized.h5ad"), recursive=True
     )))
-    print(f"Scanning {len(h5ad_files)} h5ad files...")
+    print(f"Scanning {len(h5ad_files)} harmonized h5ad files...")
 
     rows = []
     for fpath in h5ad_files:
