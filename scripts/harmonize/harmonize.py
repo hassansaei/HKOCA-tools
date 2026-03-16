@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scRNA-seq Atlas Harmonization Pipeline
+scRNA-seq Atlas Harmonization Script
 =======================================
 Reads a metadata CSV, loads each sample (H5 / H5AD / MTX),
 concatenates samples per study, then harmonizes gene space to
@@ -11,19 +11,8 @@ Usage
     python harmonize.py [-w DIR] [--csv PATH] [--gtf PATH] [--output PATH] [--summary]
 
 Only GTF path is in harmonize.config (stable). CSV and output are user-provided (--csv, --output or env):
-    METADATA_CSV   path to the metadata CSV (first column = path to each sample)
-    GTF_FILE       path to the Ensembl GRCh38.104 GTF (or set in config)
-    OUTPUT_ROOT    where to write output h5ad files
-    WORKING_DIR   working directory; CSV path and data_path in CSV are relative to this
 Relative paths in the CSV’s first column are relative to working dir (see --working-dir).
 
-Examples
---------
-    # Working dir + CSV + output (paths relative to -w)
-    python harmonize.py -w /path/to/data --csv metadata/samples.csv --output results
-
-    # Override GTF and generate summary plots
-    python harmonize.py -w /path/to/data --csv samples.csv --output results --summary
 """
 
 import os
@@ -56,11 +45,6 @@ anndata.settings.allow_write_nullable_strings = True
 
 CONFIG_FILENAME = "harmonize.config"
 
-# Fallbacks only when user does not pass --csv / --output or set env (metadata_csv and output_root are user-provided)
-_GTF_FILE = "/data-master/pure-workspace/labss/hmami/new_data/meta/gtf/Homo_sapiens.GRCh38.104.gtf"
-_METADATA_CSV = "/data-master/pure-workspace/labss/hmami/new_data/notebooks/data_loaders/datasets_metadata.csv"
-_OUTPUT_ROOT = "/data-master/pure-workspace/labss/hmami/new_data/notebooks/data_loaders/CSV_driven_results"
-
 
 def _config_path(cli_config: str | None) -> str:
     """Path to config file: CLI --config, or same dir as script, or cwd."""
@@ -84,8 +68,8 @@ def load_config(config_path: str) -> configparser.ConfigParser:
 
 def resolve_paths(args, cfg: configparser.ConfigParser) -> dict:
     """
-    gtf_file: CLI > env > config. metadata_csv, output_root: CLI > env > fallback.
-    working_dir: CLI --working_dir > env WORKING_DIR > current directory (base for relative CSV path and relative data_path in CSV).
+    gtf_file: CLI > env > config (required in config if not passed). metadata_csv, output_root: CLI or env only (required, no fallback).
+    working_dir: CLI --working_dir > env WORKING_DIR > current directory.
     """
     def get_gtf() -> str:
         if getattr(args, "gtf", None) and str(args.gtf).strip():
@@ -97,22 +81,22 @@ def resolve_paths(args, cfg: configparser.ConfigParser) -> dict:
             v = cfg.get("paths", "gtf_file").strip()
             if v:
                 return v
-        return _GTF_FILE
+        return ""
 
-    def get_user_path(cli_val, env_key: str, fallback: str) -> str:
+    def get_required(cli_val, env_key: str) -> str:
+        """CSV and output: only from CLI or env; no fallback."""
         if cli_val is not None and str(cli_val).strip():
             return str(cli_val).strip()
-        v = os.environ.get(env_key, "").strip()
-        return v or fallback
+        return os.environ.get(env_key, "").strip()
 
-    working_dir = get_user_path(getattr(args, "working_dir", None), "WORKING_DIR", os.getcwd())
+    working_dir = get_required(getattr(args, "working_dir", None), "WORKING_DIR") or os.getcwd()
     if not os.path.isabs(working_dir):
         working_dir = os.path.abspath(working_dir)
 
     return {
         "gtf_file":     get_gtf(),
-        "metadata_csv": get_user_path(getattr(args, "csv", None), "METADATA_CSV", _METADATA_CSV),
-        "output_root":  get_user_path(getattr(args, "output", None), "OUTPUT_ROOT", _OUTPUT_ROOT),
+        "metadata_csv": get_required(getattr(args, "csv", None), "METADATA_CSV"),
+        "output_root":  get_required(getattr(args, "output", None), "OUTPUT_ROOT"),
         "working_dir":  working_dir,
     }
 
@@ -691,6 +675,24 @@ def main():
     gtf_file = paths["gtf_file"]
     metadata_csv = paths["metadata_csv"]
     output_root = paths["output_root"]
+
+    # Require inputs: GTF from config (or --gtf / GTF_FILE), CSV and output from user
+    missing = []
+    if not gtf_file:
+        missing.append("GTF path (set gtf_file in harmonize.config or pass --gtf or set GTF_FILE)")
+    if not args.summary_only:
+        if not metadata_csv:
+            missing.append("Metadata CSV (pass --csv or set METADATA_CSV)")
+        if not output_root:
+            missing.append("Output directory (pass --output or set OUTPUT_ROOT)")
+    elif not output_root:
+        missing.append("Output directory for --summary-only (pass --output or set OUTPUT_ROOT)")
+
+    if missing:
+        print("Error: required input is missing:", file=sys.stderr)
+        for m in missing:
+            print(f"  - {m}", file=sys.stderr)
+        sys.exit(1)
 
     # Resolve CSV and output relative to working directory
     if metadata_csv and not os.path.isabs(metadata_csv):
