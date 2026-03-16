@@ -423,6 +423,25 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
             print(f"Skipping {n_skip} row(s) with skip=True")
         df = df[df["skip"].astype(str).str.strip().str.lower() != "true"]
 
+    # Require non-empty data_path (first column)
+    empty_path = df["data_path"].astype(str).str.strip() == ""
+    if empty_path.any():
+        rows = (df.index[empty_path] + 2).tolist()  # 2 = header + 1-based
+        raise ValueError(
+            f"CSV has empty data_path in row(s) {rows}\n"
+            f"File: {csv_path!r}"
+        )
+
+    # Require unique sample_id
+    dup = df["sample_id"].astype(str).str.strip()
+    duplicated = dup[dup.duplicated(keep=False)]
+    if not duplicated.empty:
+        dup_ids = sorted(duplicated.unique().tolist())
+        raise ValueError(
+            f"CSV has duplicate sample_id: {dup_ids}\n"
+            f"File: {csv_path!r}"
+        )
+
     return df
 
 
