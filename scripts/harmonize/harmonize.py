@@ -22,7 +22,6 @@ import argparse
 import configparser
 import collections
 import warnings
-import traceback
 
 import pandas as pd
 import numpy as np
@@ -252,8 +251,11 @@ def geo_redownload(folder: str, prefix: str, sample_id: str,
                    feature_file: str = "features.tsv.gz") -> None:
     """Re-download MTX triplet files from GEO FTP when local files are corrupted.
     Raises on first download failure so the caller does not retry read with bad files.
+    GEO sample IDs are typically GSM + 6+ digits (e.g. GSM1234567).
     """
     import urllib.request
+    if len(sample_id) < 9:
+        raise ValueError(f"GEO re-download requires sample_id of length >= 9 (e.g. GSM1234567), got {sample_id!r}")
     gsm_prefix = f"{sample_id[:-3]}nnn"
     base_url   = f"https://ftp.ncbi.nlm.nih.gov/geo/samples/{gsm_prefix}/{sample_id}/suppl"
     for fname in [f"{prefix}matrix.mtx.gz", f"{prefix}barcodes.tsv.gz",
@@ -413,7 +415,7 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
         print("WARNING: CSV uses semicolons — reading with sep=';'. "
               "Re-save as comma-separated to avoid issues.")
 
-    df = pd.read_csv(csv_path, sep=sep, keep_default_na=False)
+    df = pd.read_csv(csv_path, sep=sep, keep_default_na=False, encoding="utf-8")
     df.columns = df.columns.str.strip()
 
     required = ["data_path", "file_prefix", "sample_id", "output_dir", "study"]
@@ -429,6 +431,9 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
         if n_skip:
             print(f"Skipping {n_skip} row(s) with skip=True")
         df = df[df["skip"].astype(str).str.strip().str.lower() != "true"]
+
+    if df.empty:
+        raise ValueError(f"CSV has no rows left after skip filter. File: {csv_path!r}")
 
     # Require non-empty data_path (first column)
     empty_path = df["data_path"].astype(str).str.strip() == ""
