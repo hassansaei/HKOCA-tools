@@ -406,7 +406,7 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV not found: {csv_path!r}  (cwd: {os.getcwd()})")
 
-    with open(csv_path) as fh:
+    with open(csv_path, encoding="utf-8") as fh:
         header = fh.readline()
     sep = ";" if header.count(";") > header.count(",") else ","
     if sep == ";":
@@ -436,6 +436,15 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
         rows = (df.index[empty_path] + 2).tolist()  # 2 = header + 1-based
         raise ValueError(
             f"CSV has empty data_path in row(s) {rows}\n"
+            f"File: {csv_path!r}"
+        )
+
+    # Require non-empty study
+    empty_study = df["study"].astype(str).str.strip() == ""
+    if empty_study.any():
+        rows = (df.index[empty_study] + 2).tolist()
+        raise ValueError(
+            f"CSV has empty study in row(s) {rows}\n"
             f"File: {csv_path!r}"
         )
 
