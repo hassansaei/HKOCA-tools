@@ -250,7 +250,9 @@ def read_mtx_safe(folder: str, prefix: str = "") -> sc.AnnData:
 
 def geo_redownload(folder: str, prefix: str, sample_id: str,
                    feature_file: str = "features.tsv.gz") -> None:
-    """Re-download MTX triplet files from GEO FTP when local files are corrupted."""
+    """Re-download MTX triplet files from GEO FTP when local files are corrupted.
+    Raises on first download failure so the caller does not retry read with bad files.
+    """
     import urllib.request
     gsm_prefix = f"{sample_id[:-3]}nnn"
     base_url   = f"https://ftp.ncbi.nlm.nih.gov/geo/samples/{gsm_prefix}/{sample_id}/suppl"
@@ -260,11 +262,11 @@ def geo_redownload(folder: str, prefix: str, sample_id: str,
         fpath = os.path.join(folder, fname)
         if os.path.exists(fpath):
             os.replace(fpath, fpath + ".corrupt")
+        print(f"  Redownloading {url}...")
         try:
-            print(f"  Redownloading {url}...")
             urllib.request.urlretrieve(url, fpath)
         except Exception as e:
-            print(f"  Download failed: {e}")
+            raise RuntimeError(f"GEO re-download failed for {fname}: {e}") from e
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,10 +316,15 @@ def load_sample(row: pd.Series, working_dir: str | None = None) -> sc.AnnData:
         print(f"  [{sample_id}] Reading MTX: {os.path.basename(path)} (prefix={prefix!r})")
         try:
             adata = read_mtx_safe(path, prefix=prefix)
-        except Exception:
+        except Exception as e1:
             if sample_id.startswith("GSM"):
                 print("  Read failed, attempting GEO re-download...")
-                geo_redownload(path, prefix, sample_id)
+                try:
+                    geo_redownload(path, prefix, sample_id)
+                except Exception as e2:
+                    raise RuntimeError(
+                        f"MTX read failed: {e1}; GEO re-download failed: {e2}"
+                    ) from e2
                 adata = read_mtx_safe(path, prefix=prefix)
             else:
                 raise
