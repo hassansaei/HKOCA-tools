@@ -288,6 +288,8 @@ def load_sample(row: pd.Series, working_dir: str | None = None) -> sc.AnnData:
     Returns AnnData with all metadata columns attached to obs.
     """
     path = str(row["data_path"]).strip()
+    if not path:
+        raise ValueError("data_path is empty")
     if working_dir and not os.path.isabs(path):
         path = os.path.normpath(os.path.join(working_dir, path))
     prefix    = str(row.get("file_prefix", "") or "").strip()
