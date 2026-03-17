@@ -39,6 +39,12 @@ python harmonize_pipeline.py
 
 ---
 
+### Usage
+
+1. Create a `datasets_metadata.csv` manifest (see `config/data_manifest.csv` for the template).
+2. Configure your GTF path in `harmonize.config`.
+3. Run the pipeline:
+
 ## Configuration
 
 There are three ways to set the four required paths, in order of priority:
