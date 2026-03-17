@@ -388,13 +388,16 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
         rows = (df.index[empty_study] + 2).tolist()
         logger.error(f"CSV has empty study in row(s) {rows}")
         raise ValueError(f"CSV has empty study in row(s) {rows}")
-
+    
+    # Sample ID check for Duplication is enough, no need to be strict on the path column (especially that we allow for MTX files which can be in the same folder (path)
+    """
     path_series = df["data_path"].astype(str).str.strip()
     path_dups = path_series[path_series.duplicated(keep=False)]
     if not path_dups.empty:
         dup_paths = sorted(path_dups.unique().tolist())
         logger.error(f"CSV has duplicate data_path: {dup_paths[:5]}")
         raise ValueError(f"CSV has duplicate data_path.")
+    """
 
     id_series = df["sample_id"].astype(str).str.strip()
     id_dups = id_series[id_series.duplicated(keep=False)]
@@ -405,12 +408,94 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
 
     return df
 
+# ─────────────────────────────────────────────────────────────────────────────
+# RDS CONVERSION (R/Seurat)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
+    """Converts a saved .h5ad file directly to a Seurat .rds object using rpy2."""
+    try:
+        # Lazy imports so the script doesn't crash for users without R/rpy2
+        import rpy2.robjects as ro
+        from rpy2.robjects import pandas2ri
+        import anndata2ri
+        import gc
+        
+        pandas2ri.activate()
+        logger.info(f"Starting Seurat conversion for {os.path.basename(h5ad_path)}...")
+        
+        # Load the harmonized file from disk to ensure memory isolation
+        adata = sc.read_h5ad(h5ad_path)
+        if adata.n_obs == 0:
+            logger.warning("0 cells found. Skipping RDS conversion.")
+            return
+
+        # 1. Sanitize indices
+        adata.obs.index = adata.obs.index.astype(str)
+        adata.var.index = adata.var.index.astype(str)
+        if not adata.obs.index.is_unique: adata.obs_names_make_unique()
+        if not adata.var.index.is_unique: adata.var_names_make_unique()
+
+        # 2. Build float64 matrix (Crucial fix for anndata2ri stability)
+        if sp.issparse(adata.X):
+            X_clean = adata.X.tocsr().astype('float64')
+        else:
+            X_clean = sp.csr_matrix(adata.X).astype('float64')
+
+        if np.isnan(X_clean.data).any():
+            logger.warning("NAs found in count matrix — replacing with 0")
+            X_clean.data = np.nan_to_num(X_clean.data, nan=0.0)
+
+        # 3. Clean metadata (Force string to prevent R factor errors)
+        obs_clean = pd.DataFrame(index=adata.obs.index)
+        for col in adata.obs.columns:
+            obs_clean[col] = adata.obs[col].astype(str)
+
+        var_clean = pd.DataFrame(index=adata.var.index)
+        for col in adata.var.columns:
+            var_clean[col] = adata.var[col].astype(str)
+
+        # 4. Minimal AnnData & Transfer to R
+        clean_adata = sc.AnnData(X=X_clean, obs=obs_clean, var=var_clean)
+        
+        with ro.conversion.localconverter(anndata2ri.converter):
+            ro.globalenv["adata_sce"] = clean_adata
+
+        # 5. Execute R Seurat Construction
+        ro.r(f'''
+            suppressPackageStartupMessages(library(Seurat))
+            suppressPackageStartupMessages(library(SingleCellExperiment))
+            suppressPackageStartupMessages(library(Matrix))
+
+            counts_mat <- assay(adata_sce, assayNames(adata_sce)[1])
+            
+            seurat_obj <- CreateSeuratObject(counts = counts_mat, assay = "RNA")
+            seurat_obj[[]] <- as.data.frame(colData(adata_sce))
+            seurat_obj[["nCount_RNA"]] <- Matrix::colSums(counts_mat)
+            seurat_obj[["nFeature_RNA"]] <- Matrix::colSums(counts_mat > 0)
+
+            saveRDS(seurat_obj, file = "{rds_path}")
+        ''')
+        
+        logger.info(f"Successfully saved RDS: {rds_path}")
+
+        # 6. Aggressive Cleanup
+        del adata, clean_adata, X_clean, obs_clean, var_clean
+        ro.r('rm(list = c("adata_sce", "seurat_obj", "counts_mat")); gc()')
+        gc.collect()
+
+    except ImportError:
+        logger.error("rpy2 or anndata2ri not installed. Cannot convert to RDS.")
+        raise
+    except Exception as e:
+        logger.exception("RDS conversion failed.")
+        raise RuntimeError(f"RDS conversion failed: {e}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir: str) -> list:
+def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir: str, to_rds: bool) -> list:
     allowed_genes = load_allowed_genes(gtf_file)
 
     df_meta = load_metadata_csv(metadata_csv)
@@ -426,15 +511,27 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir
         logger.info("-" * 64)
         logger.info(f"Processing study: {study} ({len(rows)} sample(s))")
 
+        # 1. Define the base output directory FIRST
         if output_root:
             out_dir = os.path.join(output_root, study)
         else:
             out_dir = str(rows[0].get("output_dir", study)).strip() or study
             if out_dir and not os.path.isabs(out_dir):
                 out_dir = os.path.normpath(os.path.join(working_dir, out_dir))
-        os.makedirs(out_dir, exist_ok=True)
-        raw_h5ad        = os.path.join(out_dir, f"{study}.h5ad")
-        harmonized_h5ad = os.path.join(out_dir, f"{study}_harmonized.h5ad")
+        
+        # 2. Create the structured subdirectories
+        out_dir_raw = os.path.join(out_dir, "raw")
+        out_dir_harm = os.path.join(out_dir, "harmonized")
+        os.makedirs(out_dir_raw, exist_ok=True)
+        os.makedirs(out_dir_harm, exist_ok=True)
+        
+        raw_h5ad = os.path.join(out_dir_raw, f"{study}.h5ad")
+        harmonized_h5ad = os.path.join(out_dir_harm, f"{study}_harmonized.h5ad")
+        
+        if to_rds:
+            out_dir_rds = os.path.join(out_dir, "rds")
+            os.makedirs(out_dir_rds, exist_ok=True)
+            rds_file = os.path.join(out_dir_rds, f"{study}_harmonized.rds")
 
         # ── Load all samples
         adatas = []
@@ -480,10 +577,14 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir
             
             adata_new.write(harmonized_h5ad)
             logger.info(f"Saved harmonized h5ad: {harmonized_h5ad}")
+
+            if to_rds:
+                convert_h5ad_to_rds(harmonized_h5ad, rds_file)
+                
         except Exception as e:
-            logger.error(f"Harmonization failed for {study}: {e}")
+            logger.error(f"Harmonization/Conversion failed for {study}: {e}")
             logger.debug("Exception traceback:", exc_info=True)
-            failed.append({"study": study, "sample_id": "harmonize", "error": str(e)})
+            failed.append({"study": study, "sample_id": "harmonize_or_rds", "error": str(e)})
 
     logger.info("=" * 64)
     if failed:
@@ -603,6 +704,7 @@ def parse_args():
     p.add_argument("--output",  default=None, help="Output root directory")
     p.add_argument("--summary", action="store_true", help="Generate summary plots after pipeline")
     p.add_argument("--summary-only", action="store_true", help="Skip pipeline, only generate plots")
+    p.add_argument("--to-rds", action="store_true", help="Convert harmonized .h5ad to Seurat .rds")
     return p.parse_args()
 
 def main():
@@ -648,6 +750,7 @@ def main():
             gtf_file=gtf_file,
             output_root=output_root,
             working_dir=working_dir,
+            to_rds=args.to_rds,
         )
         if failed:
             sys.exit(1)
