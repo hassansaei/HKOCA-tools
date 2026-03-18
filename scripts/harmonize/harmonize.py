@@ -320,18 +320,48 @@ def load_sample(row: pd.Series, working_dir: str | None = None) -> sc.AnnData:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def harmonize_matrix_sparse(adata: sc.AnnData, allowed_genes: set) -> sc.AnnData:
-    target_genes  = sorted(allowed_genes)
-    dataset_genes = adata.var_names.tolist()
-    common_genes  = sorted(set(dataset_genes) & set(target_genes))
+    """
+    Harmonize an AnnData to the allowed_genes reference set using native sparse ops.
+    - Genes in both dataset and allowed_genes → counts preserved.
+    - Genes in allowed_genes but not in dataset → zero-filled.
+    - Genes in dataset but not in allowed_genes → dropped.
+    Output matrix is float32 CSR.
 
+    To preserve transgene counts, pass their names as part of allowed_genes
+    (via --transgenes on the CLI or the [transgenes] section in harmonize.config).
+    """
     if not sp.issparse(adata.X):
         adata.X = sp.csr_matrix(adata.X)
 
-    adata_common = adata[:, common_genes].copy()
-    gene_to_idx  = {g: i for i, g in enumerate(target_genes)}
-    coo          = sp.coo_matrix(adata_common.X)
-    new_cols     = np.array([gene_to_idx[g] for g in common_genes])[coo.col]
-    new_X        = sp.coo_matrix(
+    target_genes = sorted(allowed_genes)
+    
+    # === NEW TRANSGENE DISCOVERY STEP ===
+    sample_genes = set(adata.var_names.tolist())
+    common_genes = sorted(sample_genes & allowed_genes)
+    
+    extra_genes = sample_genes.difference(allowed_genes)
+    if extra_genes:
+        transgene_patterns = ('AAV', 'GFP', 'MCHERRY', 'TDTOMATO', 'ERCC-', 'HTO', 'CRE')
+        potential_transgenes = [
+            g for g in extra_genes 
+            if any(pattern in g.upper() for pattern in transgene_patterns)
+        ]
+        if potential_transgenes:
+            logger.warning(
+                f"⚠️ ALERT: Dropping {len(potential_transgenes)} potential transgenes/reporters "
+                f"because they are absent from the GTF: {potential_transgenes[:10]}..."
+            )
+            logger.warning(
+                "If you need to preserve these, restart the pipeline and pass them "
+                f"via the CLI: --transgenes {','.join(potential_transgenes[:3])}"
+            )
+    # ====================================
+
+    gene_to_idx = {g: i for i, g in enumerate(target_genes)}
+    sub         = adata[:, common_genes].copy()
+    coo         = sp.coo_matrix(sub.X)
+    new_cols    = np.array([gene_to_idx[g] for g in common_genes])[coo.col]
+    new_X       = sp.coo_matrix(
         (coo.data, (coo.row, new_cols)),
         shape=(adata.shape[0], len(target_genes))
     ).tocsr().astype(np.float32)
@@ -388,16 +418,6 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
         rows = (df.index[empty_study] + 2).tolist()
         logger.error(f"CSV has empty study in row(s) {rows}")
         raise ValueError(f"CSV has empty study in row(s) {rows}")
-    
-    # Sample ID check for Duplication is enough, no need to be strict on the path column (especially that we allow for MTX files which can be in the same folder (path)
-    """
-    path_series = df["data_path"].astype(str).str.strip()
-    path_dups = path_series[path_series.duplicated(keep=False)]
-    if not path_dups.empty:
-        dup_paths = sorted(path_dups.unique().tolist())
-        logger.error(f"CSV has duplicate data_path: {dup_paths[:5]}")
-        raise ValueError(f"CSV has duplicate data_path.")
-    """
 
     id_series = df["sample_id"].astype(str).str.strip()
     id_dups = id_series[id_series.duplicated(keep=False)]
@@ -415,7 +435,6 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
 def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
     """Converts a saved .h5ad file directly to a Seurat .rds object using rpy2."""
     try:
-        # Lazy imports so the script doesn't crash for users without R/rpy2
         import rpy2.robjects as ro
         from rpy2.robjects import pandas2ri
         import anndata2ri
@@ -424,19 +443,16 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
         pandas2ri.activate()
         logger.info(f"Starting Seurat conversion for {os.path.basename(h5ad_path)}...")
         
-        # Load the harmonized file from disk to ensure memory isolation
         adata = sc.read_h5ad(h5ad_path)
         if adata.n_obs == 0:
             logger.warning("0 cells found. Skipping RDS conversion.")
             return
 
-        # 1. Sanitize indices
         adata.obs.index = adata.obs.index.astype(str)
         adata.var.index = adata.var.index.astype(str)
         if not adata.obs.index.is_unique: adata.obs_names_make_unique()
         if not adata.var.index.is_unique: adata.var_names_make_unique()
 
-        # 2. Build float64 matrix (Crucial fix for anndata2ri stability)
         if sp.issparse(adata.X):
             X_clean = adata.X.tocsr().astype('float64')
         else:
@@ -446,7 +462,6 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
             logger.warning("NAs found in count matrix — replacing with 0")
             X_clean.data = np.nan_to_num(X_clean.data, nan=0.0)
 
-        # 3. Clean metadata (Force string to prevent R factor errors)
         obs_clean = pd.DataFrame(index=adata.obs.index)
         for col in adata.obs.columns:
             obs_clean[col] = adata.obs[col].astype(str)
@@ -455,13 +470,11 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
         for col in adata.var.columns:
             var_clean[col] = adata.var[col].astype(str)
 
-        # 4. Minimal AnnData & Transfer to R
         clean_adata = sc.AnnData(X=X_clean, obs=obs_clean, var=var_clean)
         
         with ro.conversion.localconverter(anndata2ri.converter):
             ro.globalenv["adata_sce"] = clean_adata
 
-        # 5. Execute R Seurat Construction
         ro.r(f'''
             suppressPackageStartupMessages(library(Seurat))
             suppressPackageStartupMessages(library(SingleCellExperiment))
@@ -479,7 +492,6 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
         
         logger.info(f"Successfully saved RDS: {rds_path}")
 
-        # 6. Aggressive Cleanup
         del adata, clean_adata, X_clean, obs_clean, var_clean
         ro.r('rm(list = c("adata_sce", "seurat_obj", "counts_mat")); gc()')
         gc.collect()
@@ -495,8 +507,18 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
 # MAIN PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir: str, to_rds: bool) -> list:
+def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
+                 working_dir: str, to_rds: bool,
+                 transgene_names: set | None = None) -> list:
     allowed_genes = load_allowed_genes(gtf_file)
+
+    # Merge user-supplied transgene names into the reference gene set
+    if transgene_names:
+        allowed_genes = allowed_genes | set(transgene_names)
+        logger.info(
+            f"Reference gene set extended with {len(transgene_names)} transgene(s): "
+            f"{sorted(transgene_names)}"
+        )
 
     df_meta = load_metadata_csv(metadata_csv)
     logger.info(f"CSV loaded: {len(df_meta)} sample rows, {df_meta['study'].nunique()} unique studies")
@@ -511,7 +533,6 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir
         logger.info("-" * 64)
         logger.info(f"Processing study: {study} ({len(rows)} sample(s))")
 
-        # 1. Define the base output directory FIRST
         if output_root:
             out_dir = os.path.join(output_root, study)
         else:
@@ -519,13 +540,12 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir
             if out_dir and not os.path.isabs(out_dir):
                 out_dir = os.path.normpath(os.path.join(working_dir, out_dir))
         
-        # 2. Create the structured subdirectories
-        out_dir_raw = os.path.join(out_dir, "raw")
+        out_dir_raw  = os.path.join(out_dir, "raw")
         out_dir_harm = os.path.join(out_dir, "harmonized")
-        os.makedirs(out_dir_raw, exist_ok=True)
+        os.makedirs(out_dir_raw,  exist_ok=True)
         os.makedirs(out_dir_harm, exist_ok=True)
         
-        raw_h5ad = os.path.join(out_dir_raw, f"{study}.h5ad")
+        raw_h5ad        = os.path.join(out_dir_raw,  f"{study}.h5ad")
         harmonized_h5ad = os.path.join(out_dir_harm, f"{study}_harmonized.h5ad")
         
         if to_rds:
@@ -569,12 +589,13 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str, working_dir
             logger.error(f"Failed to write raw h5ad for {study}: {e}")
             logger.debug("Exception traceback:", exc_info=True)
 
-        # ── Harmonize (FIXED: Passed directly from memory!)
+        # ── Harmonize (passed directly from memory)
         try:
             logger.info(f"Harmonizing {study} to standard gene space...")
+
             adata_new = harmonize_matrix_sparse(adata, allowed_genes)
             logger.info(f"Harmonized shape: {adata_new.shape}")
-            
+
             adata_new.write(harmonized_h5ad)
             logger.info(f"Saved harmonized h5ad: {harmonized_h5ad}")
 
@@ -659,8 +680,6 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
 
     total_cells = int(df["Cells"].sum())
     
-    # Keeping terminal prints here just for the final summary table output 
-    # as it looks good for the user running the CLI
     print(f"\n{'='*88}")
     print(f"HUMAN KIDNEY ORGANOID ATLAS SUMMARY  (N={len(df)} datasets)")
     print(f"{'='*88}")
@@ -676,7 +695,6 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
             fig.savefig(path)
         logger.info(f"Saved figure: {stem}.{opts['figure_extensions']}")
 
-    # ── Plots (omitted repetitive logic for brevity, keeping original charting logic)
     plot_data = df.sort_values("Cells", ascending=True)
     colors    = plt.cm.viridis(np.linspace(0.15, 0.9, len(plot_data)))
     fig, ax   = plt.subplots(figsize=(14, max(6, 0.35 * len(plot_data))))
@@ -705,6 +723,10 @@ def parse_args():
     p.add_argument("--summary", action="store_true", help="Generate summary plots after pipeline")
     p.add_argument("--summary-only", action="store_true", help="Skip pipeline, only generate plots")
     p.add_argument("--to-rds", action="store_true", help="Convert harmonized .h5ad to Seurat .rds")
+    p.add_argument("--transgenes", default=None,
+                   help="Comma-separated transgene names to add to the reference gene set "
+                        "(e.g. --transgenes GFP,Cre,tdTomato). "
+                        "Can also be set in harmonize.config under [transgenes] names = ...")
     return p.parse_args()
 
 def main():
@@ -712,12 +734,11 @@ def main():
     
     cfg = load_config(_config_path(args.config))
     paths = resolve_paths(args, cfg)
-    working_dir = paths["working_dir"]
-    gtf_file = paths["gtf_file"]
+    working_dir  = paths["working_dir"]
+    gtf_file     = paths["gtf_file"]
     metadata_csv = paths["metadata_csv"]
-    output_root = paths["output_root"]
+    output_root  = paths["output_root"]
 
-    # Set up our awesome logger!
     setup_logging(working_dir)
 
     missing = []
@@ -725,7 +746,7 @@ def main():
         missing.append("GTF path")
     if not args.summary_only:
         if not metadata_csv: missing.append("Metadata CSV")
-        if not output_root: missing.append("Output directory")
+        if not output_root:  missing.append("Output directory")
     elif not output_root:
         missing.append("Output directory for --summary-only")
 
@@ -744,6 +765,16 @@ def main():
     logger.info(f"Metadata CSV : {metadata_csv}")
     logger.info(f"Output root  : {output_root}")
 
+    # ── Resolve transgene names: CLI > config file
+    transgene_names = set()
+    if getattr(args, "transgenes", None):
+        transgene_names = {t.strip() for t in args.transgenes.split(",") if t.strip()}
+    elif cfg.has_section("transgenes") and cfg.has_option("transgenes", "names"):
+        raw = cfg.get("transgenes", "names").strip()
+        transgene_names = {t.strip() for t in raw.split(",") if t.strip()}
+    if transgene_names:
+        logger.info(f"Transgenes added to reference: {sorted(transgene_names)}")
+
     if not args.summary_only:
         failed = run_pipeline(
             metadata_csv=metadata_csv,
@@ -751,6 +782,7 @@ def main():
             output_root=output_root,
             working_dir=working_dir,
             to_rds=args.to_rds,
+            transgene_names=transgene_names,
         )
         if failed:
             sys.exit(1)
