@@ -20,10 +20,12 @@ For each study defined in your metadata CSV, the pipeline:
 3. **Attaches standardized metadata** columns (Age, protocol, species, tissue, etc.) per cell
 4. **Concatenates all samples** belonging to the same study
 5. **Saves a raw `.h5ad`** (all original genes)
-6. **Harmonizes the gene space**: drops non-coding genes, zero-fills missing genes, and standardizes to float64 sparse matrix
-7. **Saves a `_harmonized.h5ad`** (exactly 24,100 genes)
-8. **(Optional)** Safely bridges to R via `rpy2` to build and save a native Seurat `.rds` object
-9. **(Optional)** Generates publication-ready summary plots
+6. **Harmonizes the gene space**: drops non-coding genes, zero-fills missing genes, and standardizes to float64 sparse matrix.
+7. **Preserves Transgenes**: Integrates user-specified transgene/reporter names (e.g., EGFP, MCHERRY) into the final feature set, even if they are missing from the GTF.
+8. **Smart Feature Discovery**: Automatically scans for common transgene patterns (AAV, GFP, mCherry, etc.) in your raw data and issues a terminal warning if they are about to be dropped due to GTF exclusion, providing the exact CLI command to preserve them.
+9. **Saves a `_harmonized.h5ad`** (24,100 reference genes + user transgenes)
+10. **(Optional)** Safely bridges to R via `rpy2` to build and save a native Seurat `.rds` object
+11. **(Optional)** Generates publication-ready summary plots
 
 ---
 
@@ -77,6 +79,9 @@ python scripts/harmonize/harmonize.py --csv config/datasets_metadata.csv --outpu
 
 # Run pipeline and generate summary plots
 python scripts/harmonize/harmonize.py --csv config/datasets_metadata.csv --output ./results/ --summary
+
+# Run with custom transgenes (e.g., GFP and MCHERRY)
+python scripts/harmonize/harmonize.py --csv config/datasets_metadata.csv --transgenes EGFP,MCHERRY
 ```
 
 ---
@@ -92,6 +97,7 @@ python harmonize.py \
   --csv    ./config/datasets_metadata.csv \
   --gtf    ./data/meta/gtf/Homo_sapiens.GRCh38.104.gtf \
   --output ./results \
+  --transgenes EGFP,MCHERRY \
   --to-rds
 ```
 
@@ -102,6 +108,10 @@ Instead of typing the GTF path every time, you can set it in a configuration fil
 ```ini
 [paths]
 gtf_file = ./data/meta/gtf/Homo_sapiens.GRCh38.104.gtf
+
+[transgenes]
+# Comma-separated list of transgene/reporter names to preserve
+names = EGFP,MCHERRY,TTC21B,G7
 
 [summary]
 figure_dpi = 300
@@ -139,7 +149,8 @@ results/
 ### The harmonized file guarantees:
 
 - **Consistent Metadata:** Every column defined in the script (species, tissue, Age, etc.) is strictly enforced. Missing CSV data is filled with "Unknown"
-- **Consistent Genes:** Exactly the 24,100 protein-coding + lncRNA genes from the GTF
+- **Consistent Genes:** Exactly the 24,100 protein-coding + lncRNA genes from the GTF.
+- **Smart Transgene Preservation:** If the script detects common patterns (like `AAV`, `GFP`, `CRE`, `mCherry`) in your raw data that aren't in the GTF, it will output a warning. You can then explicitly preserve them using the `--transgenes` CLI flag or the `harmonize.config` file.
 
 ---
 
