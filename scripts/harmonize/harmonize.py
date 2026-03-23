@@ -89,29 +89,26 @@ def load_config(config_path: str) -> configparser.ConfigParser:
     return cfg
 
 def resolve_paths(args, cfg: configparser.ConfigParser) -> dict:
-    def get_gtf() -> str:
-        if getattr(args, "gtf", None) and str(args.gtf).strip():
-            return str(args.gtf).strip()
-        v = os.environ.get("GTF_FILE", "").strip()
-        if v: return v
-        if cfg.has_section("paths") and cfg.has_option("paths", "gtf_file"):
-            v = cfg.get("paths", "gtf_file").strip()
-            if v: return v
-        return ""
-
-    def get_required(cli_val, env_key: str) -> str:
+    def get_path(cli_val, cfg_key: str, env_key: str, default: str = "") -> str:
         if cli_val is not None and str(cli_val).strip():
             return str(cli_val).strip()
-        return os.environ.get(env_key, "").strip()
+        if cfg.has_section("paths") and cfg.has_option("paths", cfg_key):
+            v = cfg.get("paths", cfg_key).strip()
+            if v:
+                return v
+        v = os.environ.get(env_key, "").strip()
+        if v:
+            return v
+        return default
 
-    working_dir = get_required(getattr(args, "working_dir", None), "WORKING_DIR") or os.getcwd()
+    working_dir = get_path(getattr(args, "working_dir", None), "working_dir", "WORKING_DIR", os.getcwd())
     if not os.path.isabs(working_dir):
         working_dir = os.path.abspath(working_dir)
 
     return {
-        "gtf_file":     get_gtf(),
-        "metadata_csv": get_required(getattr(args, "csv", None), "METADATA_CSV"),
-        "output_root":  get_required(getattr(args, "output", None), "OUTPUT_ROOT"),
+        "gtf_file":     get_path(getattr(args, "gtf", None), "gtf_file", "GTF_FILE"),
+        "metadata_csv": get_path(getattr(args, "csv", None), "metadata_csv", "METADATA_CSV"),
+        "output_root":  get_path(getattr(args, "output", None), "output_root", "OUTPUT_ROOT"),
         "working_dir":  working_dir,
     }
 
@@ -756,6 +753,8 @@ def main():
 
     if metadata_csv and not os.path.isabs(metadata_csv):
         metadata_csv = os.path.normpath(os.path.join(working_dir, metadata_csv))
+    if gtf_file and not os.path.isabs(gtf_file):
+        gtf_file = os.path.normpath(os.path.join(working_dir, gtf_file))
     if output_root and not os.path.isabs(output_root):
         output_root = os.path.normpath(os.path.join(working_dir, output_root))
 
