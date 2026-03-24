@@ -1,0 +1,3 @@
+Dataset_Name,Lower_Feature_Method,Lower_Count_Method,Upper_Feature_Method,Upper_Count_Method,Upper_Mito_Method
+control_G7_cellbender_feature_bc_matrix_filtered.rds,manual_1800,manual_1800,mad3,mad3,manual_15
+d10_1016_j_stem_2018_04_022_harmonized.rds,lower_tri,lower_tri,mad3,mad3,renyi
