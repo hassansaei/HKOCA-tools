@@ -1,0 +1,62 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HKOCA QC & Doublet Detection Pipeline - Configuration File
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ── Global Paths ──────────────────────────────────────────────────────────────
+# Directory containing input .rds files to process
+rds_dir: /data-master/pure-workspace/labss/hmami/new_data/rds_files
+
+# Path to the CSV file defining QC thresholds for each sample
+decisions_csv: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/QC_Decisions.csv
+
+# Base directory where results (Summary, Filtered RDS, Logs) will be saved
+output_dir: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results_try
+
+# ── Output Subdirectories ─────────────────────────────────────────────────────
+# (Relative to output_dir)
+summary_subdir: Summary
+filtered_subdir: qc_filtered_rds
+doublet_subdir: doublet_filtered_rds
+log_file: logs/qc_run.log
+
+# ── Processing Filters ────────────────────────────────────────────────────────
+# File pattern to search for in rds_dir
+rds_pattern: \.rds$
+
+# Search in subfolders of rds_dir?
+recursive_discovery: FALSE
+
+# Safety flag to skip datasets known to be low quality or problematic
+skip_noisy_datasets: TRUE
+
+# List of basenames to explicitly skip (one per line, comma or space separated)
+noisy_datasets:
+
+# ── scDblFinder Parameters ────────────────────────────────────────────────────
+# Batch column for doublet detection (usually donor or sample)
+dbl_batch_col: sample_id
+
+# Hard filters before doublet detection (prevents noise from skewing estimates)
+dbl_min_count: 100
+dbl_min_feature: 50
+
+# PC dimensions for UMAP/Clustering internal to scDblFinder
+dbl_umap_dims: 20
+
+# Default chemistry if not specified in overrides below
+dbl_default_platform: 10x
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PER-SAMPLE OVERRIDES
+# ──────────────────────────────────────────────────────────────────────────────
+# If a sample requires a specific platform or a fixed doublet rate (dbr),
+# define them here using the convention: 
+#   sample.<BASENAME>.platform: <platform>
+#   sample.<BASENAME>.dbr: <numeric>
+#
+# Examples (Uncomment to use):
+# sample.MY_SAMPLE_A.platform: 10x
+# sample.MY_SAMPLE_A.dbr: 0.08
+# sample.MY_SAMPLE_B.platform: dropseq
+# sample.MY_SAMPLE_B.dbr: 0.05
+# ──────────────────────────────────────────────────────────────────────────────
