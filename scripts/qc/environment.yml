@@ -26,6 +26,8 @@ dependencies:
   - r-ggrepel
   - r-yaml
   - r-dplyr
+  - r-jsonlite
+  - r-digest
   
   # Bioconductor Packages
   - bioconductor-singlecellexperiment
