@@ -6,11 +6,40 @@
 # Directory containing input .rds files to process
 rds_dir: /data-master/pure-workspace/labss/hmami/new_data/rds_files
 
-# Path to the CSV file defining QC thresholds for each sample
-decisions_csv: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/QC_Decisions.csv
-
 # Base directory where results (Summary, Filtered RDS, Logs) will be saved
-output_dir: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results_try
+output_dir: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/test/qc/final/qc_results_30_03
+
+# Format:
+#   header line (must include Dataset_Name)
+#   one row per dataset on the following indented lines
+qc_decisions_table: Dataset_Name,Lower_Feature_Method,Lower_Count_Method,Upper_Feature_Method,Upper_Count_Method,Upper_Mito_Method
+control_G7_cellbender_feature_bc_matrix_filtered.rds,manual_3000,manual_8000,mad3,manual_160000,manual_15
+control_TTC21B_cellbender_feature_bc_matrix_filtered.rds,manual_3000,manual_8000,mad3,manual_160000,manual_15
+d10_1016_j_cell_2020_04_004_harmonized.rds,manual_1600,manual_3000,mad3,mad3,renyi
+d10_1016_j_celrep_2020_108514_harmonized.rds,none,none,none,none,manual_15
+d10_1016_j_cmet_2022_04_009_harmonized.rds,lower_tri,manual_500,mad3,manual_22000,renyi
+d10_1016_j_devcel_2019_06_001_harmonized.rds,lower_tri,manual_2300,manual_5000,manual_22000,renyi
+d10_1016_j_stem_2018_04_022_harmonized.rds,lower_tri,manual_400,manual_5000,manual_22000,renyi
+d10_1016_j_stem_2018_10_010_harmonized.rds,manual_400,manual_500,manual_3000,manual_8000,renyi
+d10_1016_j_stem_2019_06_009_harmonized.rds,lower_tri,manual_3000,manual_5000,manual_36000,none
+d10_1016_j_stem_2021_11_001_harmonized.rds,lower_tri,manual_1800,manual_5000,manual_22000,renyi
+d10_1016_j_stem_2021_12_010_harmonized.rds,lower_tri,manual_500,mad3,manual_22000,renyi
+d10_1016_j_stem_2022_06_005_harmonized.rds,lower_tri,manual_500,manual_5000,manual_14000,renyi
+d10_1038_s41467_019_13382_0_harmonized.rds,lower_tri,lower_tri,manual_3000,mad3,renyi
+d10_1038_s41467_022_33623_z_harmonized.rds,lower_tri,lower_tri,mad3,mad3,renyi
+d10_1038_s41551_025_01542_1_harmonized.rds,lower_tri,lower_tri,mad3,mad3,renyi
+d10_1038_s41563_020_00853_9_harmonized.rds,lower_tri,lower_tri,mad3,mad3,renyi
+d10_1038_s41592_018_0253_2_harmonized.rds,lower_tri,manual_1800,mad3,mad3,renyi
+d10_1038_s42003_024_07069_6_harmonized.rds,manual_2200,manual_1000,mad3,mad3,renyi
+d10_1038_s44385_025_00063_5_harmonized.rds,manual_1400,manual_1400,mad3,manual_22000,none
+d10_1093_stmcls_sxac009_harmonized.rds,manual_500,manual_1000,manual_5000,manual_8000,none
+d10_1101_505396_harmonized.rds,lower_tri,manual_5000,mad3,mad3,renyi
+d10_1126_sciadv_abj5633_GSE165104_harmonized.rds,manual_400,manual_600,mad3,mad3,renyi
+d10_1172_jci_insight_122697_harmonized.rds,lower_tri,manual_400,manual_3000,manual_8000,renyi
+d10_1186_s13073_022_01023_z_harmonized.rds,manual_1800,manual_1800,manual_8000,manual_60000,renyi
+d10_1242_dev_200198_harmonized.rds,lower_tri,lower_tri,mad3,mad3,renyi
+dno_doi_kidney_organoid_GSE312980_harmonized.rds,manual_400,manual_700,manual_8000,manual_22000,renyi
+dno_doi_kidney_organoid_LMRH_harmonized.rds,manual_1800,manual_3000,mad3,manual_162000,renyi
 
 # ── Output Subdirectories ─────────────────────────────────────────────────────
 # (Relative to output_dir)
@@ -46,17 +75,14 @@ dbl_umap_dims: 20
 # Default chemistry if not specified in overrides below
 dbl_default_platform: 10x
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PER-SAMPLE OVERRIDES
-# ──────────────────────────────────────────────────────────────────────────────
-# If a sample requires a specific platform or a fixed doublet rate (dbr),
-# define them here using the convention: 
-#   sample.<BASENAME>.platform: <platform>
-#   sample.<BASENAME>.dbr: <numeric>
-#
-# Examples (Uncomment to use):
-# sample.MY_SAMPLE_A.platform: 10x
-# sample.MY_SAMPLE_A.dbr: 0.08
-# sample.MY_SAMPLE_B.platform: dropseq
-# sample.MY_SAMPLE_B.dbr: 0.05
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Platform-specific DBR defaults (non-10x) ─────────────────────────────────
+# For platforms where no 10x-style multiplet rate table exists, provide a fixed
+# DBR estimate.  Keys follow:  platform_dbr.<platform_name>: <fraction>
+platform_dbr.dropseq: 0.049
+platform_dbr.pipseq: 0.07
+
+# ── Per-sample chemistry overrides ───────────────────────────────────────────
+sample.control_G7_cellbender_feature_bc_matrix_filtered.chemistry: v4
+sample.control_TTC21B_cellbender_feature_bc_matrix_filtered.chemistry: v4
+
+
