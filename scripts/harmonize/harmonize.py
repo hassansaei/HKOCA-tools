@@ -345,7 +345,7 @@ def harmonize_matrix_sparse(adata: sc.AnnData, allowed_genes: set) -> sc.AnnData
         ]
         if potential_transgenes:
             logger.warning(
-                f"⚠️ ALERT: Dropping {len(potential_transgenes)} potential transgenes/reporters "
+                f"ALERT: Dropping {len(potential_transgenes)} potential transgenes/reporters "
                 f"because they are absent from the GTF: {potential_transgenes[:10]}..."
             )
             logger.warning(
