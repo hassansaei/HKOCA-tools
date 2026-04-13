@@ -27,6 +27,7 @@
 #   dbl_batch_col       = sample_id
 #   dbl_min_count       = 100
 #   dbl_min_feature     = 50
+#   dbl_min_cells_run   = 25
 #   dbl_umap_dims       = 20
 #   dbl_default_platform = 10x
 #   dbl_default_chemistry  = v3            (v2/v3 use same table; v4 has higher multiplet rates)
@@ -511,6 +512,149 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
     list(platform = s, chemistry = NA_character_)
 }
 
+# ── 1.13 Small-sample guards for doublet stage ──────────────────────────────
+.make_all_singlet_calls <- function(cell_names, score_value = 0) {
+    n_cells <- length(cell_names)
+    list(
+        class = setNames(rep("singlet", n_cells), cell_names),
+        score = setNames(rep(score_value, n_cells), cell_names)
+    )
+}
+
+.check_scdblfinder_input <- function(obj_or_sce, min_cells = NULL) {
+    if (is.null(min_cells)) min_cells <- DBL_MIN_CELLS
+
+    cell_count <- ncol(obj_or_sce)
+    feature_count <- nrow(obj_or_sce)
+
+    if (is.na(cell_count) || cell_count == 0)
+        return(list(ok = FALSE, reason = "no cells remain after ghost-cell filtering"))
+    if (cell_count < min_cells)
+        return(list(ok = FALSE, reason = sprintf("too few cells for scDblFinder (%d < %d)", cell_count, min_cells)))
+    if (is.na(feature_count) || feature_count < 2)
+        return(list(ok = FALSE, reason = sprintf("too few features for scDblFinder (%d < 2)", feature_count)))
+
+    list(ok = TRUE, reason = NULL)
+}
+
+.run_optional_doublet_reductions <- function(obj, requested_dims) {
+    result <- list(obj = obj, pca_dims = integer(0), umap_ready = FALSE)
+
+    cell_count <- ncol(obj)
+    feature_count <- nrow(obj)
+    if (cell_count < 3 || feature_count < 2) {
+        log_warn(sprintf("  Skipping PCA/UMAP: too few cells/features (%d cells, %d features).",
+                         cell_count, feature_count))
+        return(result)
+    }
+
+    requested_dims <- sort(unique(as.integer(requested_dims[is.finite(requested_dims)])))
+    requested_dims <- requested_dims[requested_dims >= 1L]
+    if (length(requested_dims) == 0) {
+        log_warn("  Skipping PCA/UMAP: no positive UMAP dimensions were requested.")
+        return(result)
+    }
+
+    tryCatch({
+        obj <- NormalizeData(obj, verbose = FALSE)
+        obj <- FindVariableFeatures(obj, verbose = FALSE)
+
+        var_features <- VariableFeatures(obj)
+        if (length(var_features) < 2) {
+            log_warn(sprintf("  Skipping PCA/UMAP: only %d variable feature(s) identified.",
+                             length(var_features)))
+            result$obj <- obj
+            return(result)
+        }
+
+        obj <- ScaleData(obj, features = var_features, verbose = FALSE)
+
+        max_pcs <- min(length(var_features), cell_count - 1L, feature_count - 1L, max(requested_dims))
+        if (!is.finite(max_pcs) || max_pcs < 2) {
+            log_warn(sprintf("  Skipping PCA/UMAP: only %d PC(s) are supportable for this sample.",
+                             as.integer(max_pcs)))
+            result$obj <- obj
+            return(result)
+        }
+
+        obj <- RunPCA(obj, features = var_features, npcs = max_pcs, verbose = FALSE)
+
+        available_pcs <- ncol(Embeddings(obj, "pca"))
+        usable_dims <- requested_dims[requested_dims <= available_pcs]
+
+        if (length(usable_dims) < length(requested_dims)) {
+            log_warn(sprintf("  Clamping UMAP dims to available PCs: requested [%s], using [%s].",
+                             paste(requested_dims, collapse = ","),
+                             paste(usable_dims, collapse = ",")))
+        }
+
+        result$obj <- obj
+        result$pca_dims <- usable_dims
+
+        if (length(usable_dims) < 2) {
+            log_warn(sprintf("  Skipping UMAP: only %d usable PC dimension(s) available.",
+                             length(usable_dims)))
+            return(result)
+        }
+
+        if (cell_count <= length(usable_dims)) {
+            log_warn(sprintf("  Skipping UMAP: %d cells are insufficient for %d requested dimensions.",
+                             cell_count, length(usable_dims)))
+            return(result)
+        }
+
+        umap_neighbors <- min(30L, cell_count - 1L)
+        if (umap_neighbors < 2L) {
+            log_warn(sprintf("  Skipping UMAP: only %d neighbor(s) are supportable for %d cells.",
+                             umap_neighbors, cell_count))
+            return(result)
+        }
+
+        obj <- RunUMAP(obj, dims = usable_dims, n.neighbors = umap_neighbors, verbose = FALSE)
+        result$obj <- obj
+        result$umap_ready <- "umap" %in% names(obj@reductions)
+
+        if (!result$umap_ready)
+            log_warn("  UMAP reduction missing after RunUMAP; continuing without UMAP plot.")
+
+        result
+    }, error = function(e) {
+        log_warn(sprintf("  Visualization reductions skipped: %s", conditionMessage(e)))
+        result$obj <- obj
+        result
+    })
+}
+
+.run_scdblfinder_safe <- function(sce, label, dbr = NULL, samples = NULL) {
+    viability <- .check_scdblfinder_input(sce)
+    if (!viability$ok) {
+        log_warn(sprintf("  %s: %s — marking all %d cells as singlets.",
+                         label, viability$reason, ncol(sce)))
+        singlet_calls <- .make_all_singlet_calls(colnames(sce))
+        sce$scDblFinder.class <- singlet_calls$class
+        sce$scDblFinder.score <- singlet_calls$score
+        return(list(sce = sce, fallback = TRUE, reason = viability$reason))
+    }
+
+    tryCatch({
+        sce_out <- if (!is.null(samples)) {
+            if (is.null(dbr)) scDblFinder(sce, samples = samples)
+            else              scDblFinder(sce, samples = samples, dbr = dbr)
+        } else {
+            if (is.null(dbr)) scDblFinder(sce)
+            else              scDblFinder(sce, dbr = dbr)
+        }
+        list(sce = sce_out, fallback = FALSE, reason = NULL)
+    }, error = function(e) {
+        log_warn(sprintf("  %s: scDblFinder failed (%s) — marking all %d cells as singlets.",
+                         label, conditionMessage(e), ncol(sce)))
+        singlet_calls <- .make_all_singlet_calls(colnames(sce))
+        sce$scDblFinder.class <- singlet_calls$class
+        sce$scDblFinder.score <- singlet_calls$score
+        list(sce = sce, fallback = TRUE, reason = conditionMessage(e))
+    })
+}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — Configuration & Path Setup
@@ -568,6 +712,8 @@ DBL_MIN_FEATURE    <- as.integer(cfg$dbl_min_feature %||% 50)
 DBL_UMAP_DIMS      <- 1:as.integer(cfg$dbl_umap_dims %||% 20)
 DBL_DEFAULT_PLATFORM  <- tolower(cfg$dbl_default_platform  %||% "10x")
 DBL_DEFAULT_CHEMISTRY <- tolower(cfg$dbl_default_chemistry %||% "v3")
+DBL_MIN_CELLS_RUN  <- as.integer(cfg$dbl_min_cells_run %||% 25)
+DBL_MIN_CELLS      <- DBL_MIN_CELLS_RUN
 
 # ── Per-sample DBR table parsed from DCF keys ─────────────────────────────────
 # Keys follow the convention:
@@ -1547,6 +1693,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             chemistry = DBL_DEFAULT_CHEMISTRY,
             min_count = DBL_MIN_COUNT,
             min_feature = DBL_MIN_FEATURE,
+            min_cells_run = DBL_MIN_CELLS,
             sample_cfg = DBL_SAMPLE_CFG[[.canon_sample_name(sample_nm)]]
         )
         # Parameter-aware skip: use .meta.json if available, else fall back to
@@ -1596,11 +1743,39 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         # scDblFinder size-factor estimation
         n_before <- ncol(obj)
         obj      <- subset(obj, subset = nCount_RNA > DBL_MIN_COUNT & nFeature_RNA > DBL_MIN_FEATURE)
-        log_info(sprintf("  Ghost-cell filter: %d \u2192 %d cells", n_before, ncol(obj)))
+        n_after_ghost <- ncol(obj)
+        log_info(sprintf("  Ghost-cell filter: %d \u2192 %d cells", n_before, n_after_ghost))
         raw_cell_counts[[sample_nm]] <- n_before
+
+        if (n_after_ghost == 0) {
+            log_warn(sprintf("  No cells remain after ghost-cell filtering for '%s' — skipping sample.", sample_nm))
+            dbl_summary_stats[[sample_nm]] <- data.frame(
+                Sample           = sample_nm,
+                Total_Cells      = 0,
+                Doublets_Found   = 0,
+                Percent_Doublet  = 0,
+                DBR_Used         = NA_real_,
+                Cells_Loaded_Used = n_before,
+                Cells_Recovered_Used = 0,
+                DBR_Source       = "SKIPPED_EMPTY_AFTER_GHOST",
+                stringsAsFactors = FALSE
+            )
+            rm(obj); gc()
+            TRUE
+        } else {
 
         # S4SXP fix: force meta.data to base data.frame (Seurat v5 compatibility)
         obj@meta.data <- as.data.frame(obj@meta.data)
+
+        viability <- .check_scdblfinder_input(obj)
+        run_doublet_detection <- viability$ok
+        used_singlet_fallback <- FALSE
+        fallback_reason <- NULL
+
+        if (!run_doublet_detection) {
+            log_warn(sprintf("  %s — scDblFinder will be skipped and all remaining cells will be marked as singlets.",
+                             viability$reason))
+        }
 
         batch_levels_meta <- character(0)
         if (DBL_BATCH_COL %in% colnames(obj@meta.data)) {
@@ -1620,7 +1795,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         # DBL_PLATFORM_DBR (config keys platform_dbr.<name>).
         # The pipeline never stops due to a missing value — it degrades gracefully.
         dbr               <- NULL
-        dbr_source        <- "AUTO_10X"
+        dbr_source        <- if (run_doublet_detection) "AUTO_10X" else "SKIPPED_TOO_FEW_CELLS"
         platform          <- DBL_DEFAULT_PLATFORM    # default: "10x"
         chemistry         <- DBL_DEFAULT_CHEMISTRY   # default: "v3"
         cells_loaded_used <- NA_real_
@@ -1642,7 +1817,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
         chemistry_display <- chemistry
 
-        if (!is.null(proto_raw)) {
+        if (run_doublet_detection && !is.null(proto_raw)) {
             parsed    <- .parse_sc_protocol(proto_raw)
             platform  <- parsed$platform
             if (!is.na(parsed$chemistry)) chemistry <- parsed$chemistry
@@ -1651,7 +1826,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             log_info(sprintf("  sc_protocol='%s' -> platform=%s, chemistry=%s",
                              proto_raw, platform,
                              chemistry_display))
-        } else {
+        } else if (run_doublet_detection) {
             log_warn(sprintf(
                 "  No sc_protocol metadata for '%s' — using global defaults (platform=%s, chemistry=%s)",
                 sample_nm, platform, chemistry))
@@ -1659,7 +1834,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
         # (B) Per-sample config override (wins over sc_protocol) ──────────
         sample_cfg <- DBL_SAMPLE_CFG[[.canon_sample_name(sample_nm)]]
-        if (!is.null(sample_cfg)) {
+        if (run_doublet_detection && !is.null(sample_cfg)) {
             if (!is.null(sample_cfg$platform) && nzchar(sample_cfg$platform)) {
                 platform <- tolower(trimws(sample_cfg$platform))
                 log_info(sprintf("  Config override: platform=%s", platform))
@@ -1671,7 +1846,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         }
 
         # Validate chemistry for 10x
-        if (platform == "10x" && !chemistry %in% c("v2", "v3", "v4", "5p")) {
+        if (run_doublet_detection && platform == "10x" && !chemistry %in% c("v2", "v3", "v4", "5p")) {
             log_warn(sprintf(
                 "  Unknown 10x chemistry '%s' for '%s' — defaulting to v3",
                 chemistry, sample_nm))
@@ -1682,11 +1857,11 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         # (C) Resolve DBR ─────────────────────────────────────────────────
         # Check for explicit user-supplied DBR first (config override)
         dbr_user <- NA_real_
-        if (!is.null(sample_cfg) && !is.null(sample_cfg$dbr) && nzchar(sample_cfg$dbr)) {
+        if (run_doublet_detection && !is.null(sample_cfg) && !is.null(sample_cfg$dbr) && nzchar(sample_cfg$dbr)) {
             dbr_user <- suppressWarnings(as.numeric(sample_cfg$dbr))
         }
 
-        if (platform == "10x") {
+        if (run_doublet_detection && platform == "10x") {
             if (!is.na(dbr_user)) {
                 if (dbr_user > 0 && dbr_user <= 0.3) {
                     dbr <- dbr_user; dbr_source <- "USER_OVERRIDE_10X"
@@ -1713,7 +1888,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                         chemistry, sample_nm, cells_count_for_dbr))
                 }
             }
-        } else {
+        } else if (run_doublet_detection) {
             # Non-10x platform — priority: user override → platform default → 10x fallback
             if (!is.na(dbr_user) && dbr_user > 0 && dbr_user <= 0.3) {
                 dbr <- dbr_user; dbr_source <- "USER_OVERRIDE"
@@ -1735,19 +1910,19 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             }
         }
 
-        if (has_batch && platform == "10x" && is.na(dbr_user)) {
+        if (run_doublet_detection && has_batch && platform == "10x" && is.na(dbr_user)) {
             log_info(sprintf("  Platform: %s | Chemistry: %s | DBR: per-batch auto [%s]",
                              platform, chemistry_display, dbr_source))
             log_info(sprintf("  10x %s merged input before per-batch split (filtered_cells_total): %.0f",
                              chemistry, ncol(obj)))
-        } else {
+        } else if (run_doublet_detection) {
             log_info(sprintf("  Platform: %s | Chemistry: %s | DBR: %s [%s]",
                              platform, chemistry_display,
                              ifelse(is.null(dbr), "AUTO", sprintf("%.4f", dbr)),
                              dbr_source))
         }
 
-        if (!is.na(cells_recovered_used) && !(has_batch && platform == "10x" && is.na(dbr_user))) {
+        if (run_doublet_detection && !is.na(cells_recovered_used) && !(has_batch && platform == "10x" && is.na(dbr_user))) {
             tbl_max <- switch(chemistry,
                               v4 = max(DBL_10X_V4_TABLE_RECOVERED),
                               `5p` = max(DBL_10X_5P_TABLE_RECOVERED),
@@ -1759,93 +1934,140 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             }
         }
 
-        # Normalise + reduce (UMAP needed for visualisation)
-        log_info("  Normalizing | PCA | UMAP ...")
-        obj <- NormalizeData(obj,                 verbose = FALSE)
-        obj <- FindVariableFeatures(obj,          verbose = FALSE)
-        obj <- ScaleData(obj,                     verbose = FALSE)
-        obj <- RunPCA(obj,                        verbose = FALSE)
-        obj <- RunUMAP(obj, dims = DBL_UMAP_DIMS, verbose = FALSE)
-
-        # Convert to SCE
-        sce <- as.SingleCellExperiment(obj)
-
-        # Batch-aware detection — uses DBL_BATCH_COL to prevent the ~30% doublet
-        # artifact that appears when multi-sample merged objects are run as one
         class_results <- NULL
         score_results <- NULL
 
-        if (has_batch) {
-            batch_ids <- as.character(sce[[DBL_BATCH_COL]])
-            batch_ids[is.na(batch_ids)] <- ""
-            batch_levels <- unique(batch_ids[nzchar(batch_ids)])
-            n_sub <- length(batch_levels)
+        if (!run_doublet_detection) {
+            singlet_calls <- .make_all_singlet_calls(colnames(obj))
+            class_results <- singlet_calls$class
+            score_results <- singlet_calls$score
+            used_singlet_fallback <- TRUE
+            fallback_reason <- viability$reason
+        } else {
+            log_info("  Normalizing | PCA | UMAP ...")
+            reduction_state <- .run_optional_doublet_reductions(obj, DBL_UMAP_DIMS)
+            obj <- reduction_state$obj
 
-            if (platform == "10x" && is.na(dbr_user)) {
-                log_info(sprintf("  [BATCH MODE] %d internal samples — estimating DBR per batch.", n_sub))
+            # Convert to SCE
+            sce <- as.SingleCellExperiment(obj)
 
-                class_results <- setNames(rep(NA_character_, ncol(sce)), colnames(sce))
-                score_results <- setNames(rep(NA_real_, ncol(sce)), colnames(sce))
+            # Batch-aware detection — uses DBL_BATCH_COL to prevent the ~30% doublet
+            # artifact that appears when multi-sample merged objects are run as one
+            if (has_batch) {
+                batch_ids <- as.character(sce[[DBL_BATCH_COL]])
+                batch_ids[is.na(batch_ids)] <- ""
+                batch_levels <- unique(batch_ids[nzchar(batch_ids)])
+                n_sub <- length(batch_levels)
+                batch_counts <- table(batch_ids[nzchar(batch_ids)])
+                has_small_batches <- any(batch_counts < DBL_MIN_CELLS)
 
-                batch_dbrs <- setNames(rep(NA_real_, n_sub), batch_levels)
-                batch_sizes <- setNames(rep(0L, n_sub), batch_levels)
-                tbl_max <- switch(chemistry,
-                                  v4 = max(DBL_10X_V4_TABLE_RECOVERED),
-                                  `5p` = max(DBL_10X_5P_TABLE_RECOVERED),
-                                  max(DBL_10X_V3_TABLE_RECOVERED))
+                if (platform == "10x" && is.na(dbr_user)) {
+                    log_info(sprintf("  [BATCH MODE] %d internal samples — estimating DBR per batch.", n_sub))
 
-                for (batch_nm in batch_levels) {
-                    batch_idx <- which(batch_ids == batch_nm)
-                    sub_sce <- sce[, batch_idx]
-                    sub_n <- ncol(sub_sce)
-                    batch_sizes[[batch_nm]] <- sub_n
+                    class_results <- setNames(rep(NA_character_, ncol(sce)), colnames(sce))
+                    score_results <- setNames(rep(NA_real_, ncol(sce)), colnames(sce))
 
-                    sub_dbr <- .estimate_10x_dbr_by_chemistry(sub_n, chemistry)
-                    if (!is.na(sub_dbr) && sub_dbr > 0 && sub_dbr <= 0.3) {
-                        batch_dbrs[[batch_nm]] <- sub_dbr
-                        log_info(sprintf("    [BATCH:%s] cells=%d | DBR=%.4f", batch_nm, sub_n, sub_dbr))
+                    batch_dbrs <- setNames(rep(NA_real_, n_sub), batch_levels)
+                    batch_sizes <- setNames(rep(0L, n_sub), batch_levels)
+                    tbl_max <- switch(chemistry,
+                                      v4 = max(DBL_10X_V4_TABLE_RECOVERED),
+                                      `5p` = max(DBL_10X_5P_TABLE_RECOVERED),
+                                      max(DBL_10X_V3_TABLE_RECOVERED))
+
+                    for (batch_nm in batch_levels) {
+                        batch_idx <- which(batch_ids == batch_nm)
+                        sub_sce <- sce[, batch_idx]
+                        sub_n <- ncol(sub_sce)
+                        batch_sizes[[batch_nm]] <- sub_n
+
+                        sub_dbr <- .estimate_10x_dbr_by_chemistry(sub_n, chemistry)
+                        if (!is.na(sub_dbr) && sub_dbr > 0 && sub_dbr <= 0.3) {
+                            batch_dbrs[[batch_nm]] <- sub_dbr
+                            log_info(sprintf("    [BATCH:%s] cells=%d | DBR=%.4f", batch_nm, sub_n, sub_dbr))
+                        } else {
+                            log_warn(sprintf("    [BATCH:%s] could not estimate 10x %s DBR from %d filtered cells — using scDblFinder auto",
+                                             batch_nm, chemistry, sub_n))
+                        }
+
+                        if (sub_n > tbl_max) {
+                            log_info(sprintf("    [BATCH:%s] extrapolation: yes (above %.0f filtered cells)",
+                                             batch_nm, tbl_max))
+                        }
+
+                        sub_result <- .run_scdblfinder_safe(
+                            sub_sce,
+                            label = sprintf("[BATCH:%s]", batch_nm),
+                            dbr = if (is.na(batch_dbrs[[batch_nm]])) NULL else batch_dbrs[[batch_nm]]
+                        )
+                        sub_sce <- sub_result$sce
+                        used_singlet_fallback <- used_singlet_fallback || isTRUE(sub_result$fallback)
+                        if (isTRUE(sub_result$fallback) && is.null(fallback_reason))
+                            fallback_reason <- sprintf("batch %s: %s", batch_nm, sub_result$reason)
+
+                        class_results[colnames(sub_sce)] <- as.character(sub_sce$scDblFinder.class)
+                        score_results[colnames(sub_sce)] <- as.numeric(sub_sce$scDblFinder.score)
+                    }
+
+                    valid_batches <- is.finite(batch_dbrs)
+                    if (any(valid_batches)) {
+                        dbr <- stats::weighted.mean(batch_dbrs[valid_batches], batch_sizes[valid_batches])
+                        log_info(sprintf("  [BATCH MODE] Weighted DBR across %d internal samples: %.4f",
+                                         sum(valid_batches), dbr))
                     } else {
-                        log_warn(sprintf("    [BATCH:%s] could not estimate 10x %s DBR from %d filtered cells — using scDblFinder auto",
-                                         batch_nm, chemistry, sub_n))
+                        dbr <- NULL
+                        dbr_source <- "AUTO_10X_FALLBACK"
                     }
+                } else if (has_small_batches) {
+                    log_warn(sprintf("  [BATCH MODE] At least one internal sample has < %d cells — processing batches independently with fallback singlet calls for undersized batches.",
+                                     DBL_MIN_CELLS))
 
-                    if (sub_n > tbl_max) {
-                        log_info(sprintf("    [BATCH:%s] extrapolation: yes (above %.0f filtered cells)",
-                                         batch_nm, tbl_max))
+                    class_results <- setNames(rep(NA_character_, ncol(sce)), colnames(sce))
+                    score_results <- setNames(rep(NA_real_, ncol(sce)), colnames(sce))
+
+                    for (batch_nm in batch_levels) {
+                        batch_idx <- which(batch_ids == batch_nm)
+                        sub_sce <- sce[, batch_idx]
+                        sub_result <- .run_scdblfinder_safe(
+                            sub_sce,
+                            label = sprintf("[BATCH:%s]", batch_nm),
+                            dbr = dbr
+                        )
+                        sub_sce <- sub_result$sce
+                        used_singlet_fallback <- used_singlet_fallback || isTRUE(sub_result$fallback)
+                        if (isTRUE(sub_result$fallback) && is.null(fallback_reason))
+                            fallback_reason <- sprintf("batch %s: %s", batch_nm, sub_result$reason)
+
+                        class_results[colnames(sub_sce)] <- as.character(sub_sce$scDblFinder.class)
+                        score_results[colnames(sub_sce)] <- as.numeric(sub_sce$scDblFinder.score)
                     }
-
-                    sub_sce <- if (is.na(batch_dbrs[[batch_nm]])) scDblFinder(sub_sce)
-                               else                               scDblFinder(sub_sce, dbr = batch_dbrs[[batch_nm]])
-
-                    class_results[colnames(sub_sce)] <- as.character(sub_sce$scDblFinder.class)
-                    score_results[colnames(sub_sce)] <- as.numeric(sub_sce$scDblFinder.score)
-                }
-
-                valid_batches <- is.finite(batch_dbrs)
-                if (any(valid_batches)) {
-                    dbr <- stats::weighted.mean(batch_dbrs[valid_batches], batch_sizes[valid_batches])
-                    log_info(sprintf("  [BATCH MODE] Weighted DBR across %d internal samples: %.4f",
-                                     sum(valid_batches), dbr))
                 } else {
-                    dbr <- NULL
-                    dbr_source <- "AUTO_10X_FALLBACK"
+                    log_info(sprintf("  [BATCH MODE] %d internal samples — processing independently.", n_sub))
+                    batch_result <- .run_scdblfinder_safe(sce, label = "[BATCH MODE]", dbr = dbr, samples = DBL_BATCH_COL)
+                    sce <- batch_result$sce
+                    used_singlet_fallback <- used_singlet_fallback || isTRUE(batch_result$fallback)
+                    if (isTRUE(batch_result$fallback) && is.null(fallback_reason))
+                        fallback_reason <- batch_result$reason
+
+                    class_results <- as.character(sce$scDblFinder.class)
+                    score_results <- as.numeric(sce$scDblFinder.score)
+                    names(class_results) <- names(score_results) <- colnames(sce)
                 }
             } else {
-                log_info(sprintf("  [BATCH MODE] %d internal samples — processing independently.", n_sub))
-                sce <- if (is.null(dbr)) scDblFinder(sce, samples = DBL_BATCH_COL)
-                       else              scDblFinder(sce, samples = DBL_BATCH_COL, dbr = dbr)
+                log_info("  [SINGLE MODE] No internal batching — running standard mode.")
+                single_result <- .run_scdblfinder_safe(sce, label = "[SINGLE MODE]", dbr = dbr)
+                sce <- single_result$sce
+                used_singlet_fallback <- used_singlet_fallback || isTRUE(single_result$fallback)
+                if (isTRUE(single_result$fallback) && is.null(fallback_reason))
+                    fallback_reason <- single_result$reason
+
                 class_results <- as.character(sce$scDblFinder.class)
                 score_results <- as.numeric(sce$scDblFinder.score)
                 names(class_results) <- names(score_results) <- colnames(sce)
             }
-        } else {
-            log_info("  [SINGLE MODE] No internal batching — running standard mode.")
-            sce <- if (is.null(dbr)) scDblFinder(sce)
-                   else              scDblFinder(sce, dbr = dbr)
-            class_results <- as.character(sce$scDblFinder.class)
-            score_results <- as.numeric(sce$scDblFinder.score)
-            names(class_results) <- names(score_results) <- colnames(sce)
         }
+
+        if (used_singlet_fallback && !dbr_source %in% c("SKIPPED_TOO_FEW_CELLS", "SKIPPED_EMPTY_AFTER_GHOST"))
+            dbr_source <- "FALLBACK_SINGLET_CALLS"
 
         # Map results back to Seurat object
         obj$scDblFinder.class <- class_results[colnames(obj)]
@@ -1855,21 +2077,35 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         n_doublets  <- sum(obj$scDblFinder.class == "doublet", na.rm = TRUE)
         pct_doublet <- round((n_doublets / n_total) * 100, 2)
         log_info(sprintf("  Total: %d | Doublets: %d (%.2f%%)", n_total, n_doublets, pct_doublet))
+        if (used_singlet_fallback && !is.null(fallback_reason))
+            log_warn(sprintf("  Doublet fallback reason: %s", fallback_reason))
 
         # Doublet audit plots (4-panel per sample)
         plot_df        <- as.data.frame(obj@meta.data)
-        umap_coords    <- as.data.frame(Embeddings(obj, "umap"))
-        plot_df$UMAP_1 <- umap_coords[, 1]
-        plot_df$UMAP_2 <- umap_coords[, 2]
         dbl_colors     <- c("singlet" = "grey85", "doublet" = "firebrick3")
 
-        p_umap <- ggplot(plot_df, aes(UMAP_1, UMAP_2, color = scDblFinder.class)) +
-            geom_point(size = 0.5, alpha = 0.8) +
-            scale_color_manual(values = dbl_colors) +
-            labs(title    = paste("Doublet Classification \u2014", sample_nm),
-                 subtitle = sprintf("Doublets: %d (%.2f%%)", n_doublets, pct_doublet),
-                 color = NULL) +
-            theme_minimal()
+        if ("umap" %in% names(obj@reductions)) {
+            umap_coords    <- as.data.frame(Embeddings(obj, "umap"))
+            plot_df$UMAP_1 <- umap_coords[, 1]
+            plot_df$UMAP_2 <- umap_coords[, 2]
+
+            p_umap <- ggplot(plot_df, aes(UMAP_1, UMAP_2, color = scDblFinder.class)) +
+                geom_point(size = 0.5, alpha = 0.8) +
+                scale_color_manual(values = dbl_colors) +
+                labs(title    = paste("Doublet Classification \u2014", sample_nm),
+                     subtitle = sprintf("Doublets: %d (%.2f%%)", n_doublets, pct_doublet),
+                     color = NULL) +
+                theme_minimal()
+        } else {
+            umap_coords <- NULL
+            p_umap <- ggplot() +
+                annotate("text", x = 0.5, y = 0.5,
+                         label = "UMAP unavailable for this sample",
+                         size = 5, color = "grey50") +
+                labs(title = paste("Doublet Classification \u2014", sample_nm),
+                     subtitle = sprintf("Doublets: %d (%.2f%%)", n_doublets, pct_doublet)) +
+                theme_void()
+        }
 
         p_vln <- ggplot(plot_df, aes(scDblFinder.class, nFeature_RNA, fill = scDblFinder.class)) +
             geom_violin(alpha = 0.7, trim = FALSE) +
@@ -1910,7 +2146,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             Percent_Doublet  = pct_doublet,
             DBR_Used         = ifelse(is.null(dbr), NA_real_, dbr),
             Cells_Loaded_Used = ifelse(is.na(cells_loaded_used), NA_real_, cells_loaded_used),
-            Cells_Recovered_Used = ifelse(is.na(cells_recovered_used), NA_real_, cells_recovered_used),
+            Cells_Recovered_Used = ifelse(is.na(cells_recovered_used), n_total, cells_recovered_used),
             DBR_Source       = dbr_source,
             stringsAsFactors = FALSE
         )
@@ -1918,6 +2154,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         rm(obj, obj_singlets, sce, plot_df, umap_coords, p_umap, p_vln, p_sct, p_dns)
         gc()
         TRUE
+        }
         
         }, error = function(e) {
             log_error(sprintf("[FAILED DOUBLET] %s: %s", sample_nm, conditionMessage(e)))
@@ -2683,7 +2920,7 @@ if (!has_qc_summary && !has_dbl_summary) {
                       position = position_stack(vjust = 0.5),
                       size = 3, color = "white", fontface = "bold") +
             labs(title    = "Cohort-Level Cell Budget",
-                 subtitle = sprintf("Total input: %s cells", scales::comma(sum(donut_df$count))),
+                 subtitle = sprintf("Total input is: %s cells", scales::comma(sum(donut_df$count))),
                  fill = "") +
             theme_void(base_size = 10) +
             theme(legend.position = "right",
