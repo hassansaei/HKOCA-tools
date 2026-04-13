@@ -1,0 +1,2 @@
+data_path,file_prefix,sample_id,output_dir,study,source,diff_protocol,sc_protocol,sequencing,genome_build,Age,type,disease,condition
+input/GSM5507788_3D_day28_3_subset_1000cells.h5ad,,GSM5507788,d10_1016_j_stem_2021_11_001,d10_1016_j_stem_2021_11_001,hiPSC,Takasato_modified,10x_3_v3,Illumina_HiSeq_2500,hg38,d28,scRNAseq,Control,
