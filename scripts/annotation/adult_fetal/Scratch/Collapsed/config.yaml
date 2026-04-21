@@ -1,0 +1,327 @@
+# ============================================================
+# Unified Adult-Fetal Kidney Reference Pipeline — Configuration
+# ============================================================
+# All paths, thresholds, and tuneable parameters live here.
+# The pipeline reads this file at startup; no hardcoded values
+# exist in the source code.
+
+# ----------------------------------------------------------
+# Paths
+# ----------------------------------------------------------
+paths:
+  # Input reference h5ad files
+  adult_h5ad: "../ref_data/Adult_194504.h5ad"
+  fetal_h5ad: "../ref_data/Fetal_17962.h5ad"
+
+  # HPA single-cell expression reference (TSV with Gene, Gene name, Cell type, nCPM columns)
+  hpa_tsv: "../ref_data/rna_single_cell_type.tsv"
+
+  # Root output directory (main contract outputs land here)
+  output_dir: "outputs"
+
+  # Auxiliary artifacts subfolder (relative to output_dir)
+  aux_subdir: "aux"
+
+  # Figures subfolder (relative to aux_subdir)
+  figures_subdir: "figures"
+
+  # Diagnostics subfolder (relative to aux_subdir)
+  diagnostics_subdir: "diagnostics"
+
+# ----------------------------------------------------------
+# Reproducibility
+# ----------------------------------------------------------
+seed: 42
+
+# ----------------------------------------------------------
+# Phase 1 — Preprocessing
+# ----------------------------------------------------------
+preprocessing:
+  min_genes_per_cell: 200
+  min_cells_per_gene: 10
+  n_highly_variable_genes: 3000
+  apply_min_celltype_filter: false
+  min_cells_per_type: 20          # only used when apply_min_celltype_filter is true
+
+  # Labels to drop from the adult reference before processing
+  adult_labels_to_remove:
+    - "t cell"
+    - "lymphocyte"
+    - "natural killer cell"
+    - "myeloid cell"
+    - "dendritic cell, human"
+    - "b cell"
+    - "non-classical monocyte"
+    - "classical monocyte"
+    - "conventional dendritic cell"
+
+  # Labels to drop from the fetal reference before processing
+  fetal_labels_to_remove:
+    - "leukocyte"
+
+  # Gene prefixes and exact names to exclude from marker testing (technical noise)
+  noise_gene_prefixes:
+    - "MT-"
+    - "RPS"
+    - "RPL"
+    - "HLA-"
+    - "EEF"
+    - "EIF"
+    - "H3-"
+    - "TMSB"
+    - "ACTG"
+    - "FAU"
+    - "ATP5"
+    - "COX"
+    - "NDUF"
+    - "UQCR"
+    - "HSP"
+    - "UB"
+
+  noise_gene_exact:
+    - "MALAT1"
+    - "NEAT1"
+    - "GAPDH"
+    - "ACTB"
+    - "FTH1"
+    - "FTL"
+    - "RACK1"
+    - "NACA"
+    - "PTMA"
+    - "BTF3"
+    - "MYL12A"
+    - "MYL12B"
+    - "MYL6"
+    - "TPT1"
+    - "S100A6"
+    - "ID1"
+    - "ID2"
+    - "ID3"
+    - "CD63"
+    - "CD9"
+
+# ----------------------------------------------------------
+# Phase 1 — Marker extraction
+# ----------------------------------------------------------
+marker_extraction:
+  pval_adj_cutoff: 0.05
+  require_positive_logfc: true
+  pval_epsilon: 1.0e-300          # floor for -log10(p) calculations
+  top_n_markers: 20               # controls top20 TSV and UMAP labels
+  min_cells_per_cell_type_for_marker_calling: 20
+
+  # Marker prevalence/specificity quality gates applied after DE.
+  # Keep markers with pct_cells >= min_pct_cells and pct_rest <= max_pct_rest.
+  min_pct_cells: 0.05
+  max_pct_rest: 0.50
+
+  # Optional mitigation for adult stress-signature confounding.
+  # 1) These genes are used to score stress.
+  # 2) adult_stress_mitigation_mode controls pre-DE mitigation.
+  # 3) Genes are also removed from adult marker tables after DE.
+  adult_stress_signature_genes:   # Systematic assessment of tissue dissociation and storage biases in single-cell and single-nucleus RNA-seq workflows. Genome Biol. 2020 Jun
+    - "FOS"
+    - "FOSB"
+    - "JUN"
+    - "JUNB"
+    - "JUND"
+    - "ATF3"
+    - "EGR1"
+    - "DUSP1"
+
+  # Stress mitigation before HVG/marker extraction for adult only.
+  # one of: none | exclude_high_stress | regress_out
+  adult_stress_mitigation_mode: "exclude_high_stress"
+  # Used when adult_stress_mitigation_mode == exclude_high_stress.
+  adult_stress_exclude_quantile: 0.99
+
+  # Fetal rescue: generic kidney label detection
+  fetal_generic_kidney_labels:
+    - "kidney cell"
+    - "kidney cells"
+    - "kidney epithelial cell"
+
+  # Marker gene sets used for rescue scoring
+  fetal_rescue_distal_markers:
+    - "MAL"
+    - "CLCN5"
+    - "SLC12A3"
+    - "POU3F3"
+
+  fetal_rescue_loh_markers:
+    - "SLC12A1"
+    - "PAPPA2"
+    - "UMOD"
+
+  # Canonical names assigned after rescue
+  fetal_rescue_label_distal: "distal_tubule"
+  fetal_rescue_label_loh: "loop_of_henle"
+
+  # Rescue confidence gating: low-margin assignments are marked ambiguous.
+  fetal_rescue_min_margin: 0.05
+  fetal_rescue_min_score: 0.20
+  # one of: keep_original | assign_label
+  fetal_rescue_ambiguous_strategy: "keep_original"
+  fetal_rescue_ambiguous_label: "ambiguous_tubule"
+
+# ----------------------------------------------------------
+# Phase 1 — UMAP figure
+# ----------------------------------------------------------
+umap:
+  fig_dpi: 300
+  fig_width: 16          # inches, per panel
+  fig_height: 7          # inches total
+
+# ----------------------------------------------------------
+# Phase 2 — HPA validation (Section B only)
+# ----------------------------------------------------------
+hpa_validation:
+  validation_ncpm_threshold: 1.0
+  top_n_validated: 25             # top25 per cell type
+
+  # Extraction + HPA joint ranking weights (must sum to 1.0)
+  weight_extraction_strength: 0.50
+  weight_hpa_strength: 0.25
+  weight_hpa_specificity: 0.25
+
+  # Post-validation filtering thresholds
+  pval_threshold: 0.05
+  logfc_threshold: 0.0
+
+  # Cell-type labels for which manual marker overrides apply
+  manual_override_cell_types:
+    - "parietal epithelial cell"
+    - "parietal epithelial cells"
+    - "perithelial epithelial cell"
+    - "perithelial epithelial cells"
+    - "pariethelial epithelial cell"
+    - "pariethelial epithelial cells"
+
+  # Gene symbols always validated for the above override labels
+  manual_validated_markers:
+    - "CDH6"
+    - "CLDN1"
+    - "CLDN10"
+    - "CLDN3"
+    - "KRT19"
+    - "PAX2"
+    - "PAX8"
+
+  # CellxGene → HPA cell-type nomenclature mapping
+  hpa_cell_type_mapping:
+    "epithelial cell of proximal tubule": "proximal tubule cells"
+    "kidney loop of Henle thick ascending limb epithelial cell": "loop of henle epithelial cells"
+    "kidney loop of Henle thin ascending limb epithelial cell": "loop of henle epithelial cells"
+    "kidney loop of Henle thin descending limb epithelial cell": "loop of henle epithelial cells"
+    "kidney distal convoluted tubule epithelial cell": "distal convoluted tubule cells"
+    "kidney connecting tubule epithelial cell": "renal connecting tubule cells"
+    "kidney collecting duct principal cell": "renal collecting duct principal cells"
+    "kidney collecting duct intercalated cell": "renal collecting duct intercalated cells"
+    "kidney inner medulla collecting duct epithelial cell": "renal collecting duct principal cells"
+    "podocyte": "podocytes"
+    "parietal epithelial cell": "parietal cells"
+    "parietal epithelial cells": "parietal cells"
+    "endothelial cells": "vascular endothelial cells"
+    "glomerular capillary endothelial cell": "vascular endothelial cells"
+    "peritubular capillary endothelial cell": "vascular endothelial cells"
+    "vasa recta cell": "vascular endothelial cells"
+    "kidney arterial blood vessel cell": "vascular endothelial cells"
+    "endothelial cell of lymphatic vessel": "lymphatic endothelial cells"
+    "mural cell": "pericytes"
+    "vascular associated smooth muscle cell": "vascular smooth muscle cells"
+    "renal medullary fibroblast": "fibroblasts"
+    "kidney interstitial fibroblast": "fibroblasts"
+    # Alias variants
+    "perithelial epithelial cell": "parietal cells"
+    "perithelial epithelial cells": "parietal cells"
+    "pariethelial epithelial cell": "parietal cells"
+    "pariethelial epithelial cells": "parietal cells"
+
+# ----------------------------------------------------------
+# Phase 3 — Overlap & SnapSeed YAML export
+# ----------------------------------------------------------
+overlap:
+  # Harmonization map: raw cell-type label → normalized canonical name
+  # Used for cross-stage cell-type matching in Phase 3
+  harmonization_map:
+    # Endothelial lineage
+    "endothelial cells": "Endothelial"
+    "endothelial cell": "Endothelial"
+    "endothelial cell of lymphatic vessel": "Endothelial"
+    "glomerular capillary endothelial cell": "Endothelial"
+    "kidney arterial blood vessel cell": "Endothelial"
+    "peritubular capillary endothelial cell": "Endothelial"
+    "vasa recta descending capillary endothelial cell": "Endothelial"
+    "vasa recta cell": "Endothelial"
+    # Podocytes
+    "podocyte": "Podocyte"
+    # Parietal epithelial cells
+    "parietal epithelial cell": "Parietal Epithelial"
+    "parietal epithelial cells": "Parietal Epithelial"
+    "perithelial epithelial cell": "Parietal Epithelial"
+    "perithelial epithelial cells": "Parietal Epithelial"
+    "pariethelial epithelial cell": "Parietal Epithelial"
+    "pariethelial epithelial cells": "Parietal Epithelial"
+    # Proximal tubule
+    "epithelial cell of proximal tubule": "Proximal Tubule"
+    # Loop of Henle
+    "loop_of_henle": "loop_of_henle"
+    "loop of henle": "loop_of_henle"
+    "kidney loop of henle thick ascending limb epithelial cell": "loop_of_henle"
+    "kidney loop of henle thin ascending limb epithelial cell": "loop_of_henle"
+    "kidney loop of henle thin descending limb epithelial cell": "loop_of_henle"
+    # Distal tubule
+    "distal_tubule": "distal_tubule"
+    "distal tubule": "distal_tubule"
+    "kidney distal convoluted tubule epithelial cell": "distal_tubule"
+    # Mesangial / mural
+    "glomerular mesangial cell": "Mesangial/Smooth Muscle"
+    "vascular associated smooth muscle cell": "Mesangial/Smooth Muscle"
+    "mural cell": "Mesangial/Smooth Muscle"
+    # Collecting duct / ureteric bud
+    "kidney collecting duct principal cell": "Collecting Duct"
+    "kidney collecting duct intercalated cell": "Collecting Duct"
+    "kidney connecting tubule epithelial cell": "Collecting Duct"
+    "kidney inner medulla collecting duct epithelial cell": "Collecting Duct"
+    # Stroma
+    "kidney interstitial cell": "Stroma"
+    "fibroblast": "Stroma"
+    "kidney interstitial fibroblast": "Stroma"
+    "renal medullary fibroblast": "Stroma"
+
+  # Overlap figure heatmap settings
+  heatmap_max_rows: 20
+  heatmap_max_cols: 20
+
+  # Optional Phase 3 acceptance gates. Set to null to disable a specific check.
+  acceptance_criteria:
+    min_best_mapped_jaccard: null
+    min_best_mapped_shared_genes: null
+    expected_shared_mapped_min: null
+    expected_shared_mapped_max: null
+    expected_adult_only_min: null
+    expected_adult_only_max: null
+    expected_fetal_only_min: null
+    expected_fetal_only_max: null
+
+  # YAML schema version written into both output files
+  yaml_schema_version: 1
+
+# ----------------------------------------------------------
+# Run-level metadata outputs (optional)
+# ----------------------------------------------------------
+dataset_manifest:
+  adult:
+    source: ""
+    accession: ""
+    tissue_region: "kidney"
+    donor_count: ""
+    platform: ""
+    download_date: ""
+  fetal:
+    source: ""
+    accession: ""
+    tissue_region: "kidney"
+    donor_count: ""
+    platform: ""
+    download_date: ""
