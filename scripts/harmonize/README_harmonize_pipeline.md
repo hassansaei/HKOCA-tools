@@ -20,9 +20,9 @@ For each study defined in your metadata CSV, the pipeline:
 3. **Attaches standardized metadata** columns (Age, protocol, species, tissue, etc.) per cell
 4. **Concatenates all samples** belonging to the same study
 5. **Saves a raw `.h5ad`** (all original genes)
-6. **Harmonizes the gene space**: drops non-coding genes, zero-fills missing genes, and standardizes to float64 sparse matrix.
-7. **Preserves Transgenes**: Integrates user-specified transgene/reporter names (e.g., EGFP, MCHERRY) into the final feature set, even if they are missing from the GTF.
-8. **Smart Feature Discovery**: Automatically scans for common transgene patterns (AAV, GFP, mCherry, etc.) in your raw data and issues a terminal warning if they are about to be dropped due to GTF exclusion, providing the exact CLI command to preserve them.
+6. Harmonizes the gene space: Drops non-coding genes, zero-fills missing genes, and standardizes to a float32 sparse matrix for memory efficiency.
+7. Preserves Transgenes: Integrates user-specified transgene/reporter names (EGFP, TTC21B, etc..) into the final feature set by merging them into the reference gene set before processing.
+8. Automated GEO Recovery: If an MTX sample with a GSM ID fails to load, the script automatically attempts to re-download the data from the GEO FTP servers.
 9. **Saves a `_harmonized.h5ad`** (24,100 reference genes + user transgenes)
 10. **(Optional)** Safely bridges to R via `rpy2` to build and save a native Seurat `.rds` object
 11. **(Optional)** Generates publication-ready summary plots
@@ -148,9 +148,10 @@ results/
 
 ### The harmonized file guarantees:
 
-- **Consistent Metadata:** Every column defined in the script (species, tissue, Age, etc.) is strictly enforced. Missing CSV data is filled with "Unknown"
-- **Consistent Genes:** Exactly the 24,100 protein-coding + lncRNA genes from the GTF.
-- **Smart Transgene Preservation:** If the script detects common patterns (like `AAV`, `GFP`, `CRE`, `mCherry`) in your raw data that aren't in the GTF, it will output a warning. You can then explicitly preserve them using the `--transgenes` CLI flag or the `harmonize.config` file.
+-**Consistent Metadata**: Mandatory biological columns (Age, protocol, etc.) are strictly enforced, with missing values filled as "Unknown".
+-**Flexible Metadata**: Any additional columns in your CSV (such as `disease` or `condition`) are automatically detected and added to the `.obs` slot.
+**Consistent Genes**: Exactly the 24,100 protein-coding + lncRNA genes from the GRCh38.104 GTF.
+- **Sparse Matrix**: The final output is stored as a `float32` CSR matrix to minimize file size while maintaining precision for downstream analysis.
 
 ---
 
@@ -189,28 +190,29 @@ The metadata CSV must be comma-separated. The script requires only three strict 
 
 ### Standard Metadata Columns (Attached to cells)
 
-- `source`
-- `species`
-- `tissue`
-- `diff_protocol`
-- `sc_protocol`
-- `sequencing`
-- `genome_build`
-- `Age`
-- `type`
-- `disease`
-- `condition`
+The following columns are required in your metadata CSV:
+*  `source` 
+*  `diff_protocol` 
+*  `sc_protocol` 
+*  `sequencing` 
+*  `genome_build` 
+*  `Age` 
+*  `type` 
+
+**Automatically Detected Columns**:
+ Additional columns found in your CSV are automatically propagated to the AnnData `.obs`. For example:
+* `disease`
+* `condition`
 
 ---
 
 ## Supported File Formats
 
 | Format | `data_path` | `file_prefix` |
-|--------|-------------|---------------|
-| 10x H5 (`.h5`) | Full path to the `.h5` file | empty |
-| H5AD (`.h5ad`) | Full path to the `.h5ad` file | empty |
-| MTX triplet with prefix | Path to the folder containing the triplet | GEO prefix string (e.g., `GSM...`) |
-| MTX triplet, no prefix | Path to the triplet folder | empty |
+| :--- | :--- | :--- |
+| **10x H5 (`.h5`)** | Full path to the `.h5` file |  Leave empty  |
+| **H5AD (`.h5ad`)** | Full path to the `.h5ad` file |  Leave empty  |
+| **MTX Folder** | Path to the directory containing `.mtx.gz` |  The prefix including trailing underscores (e.g., `GSM5112197_KR01_`)  |
 
 ### Format Auto-Detection
 
@@ -234,12 +236,10 @@ If an individual sample fails to load, the script will gracefully log the error,
 ## Common Errors
 
 | Error | Cause | Fix |
-|-------|-------|-----|
-| `FileNotFoundError: GTF file not found` | `GTF_FILE` path is wrong | Set path in config or pass `--gtf` |
-| CSV uses semicolons | CSV is semicolon-separated | Re-save as comma-separated (script will warn but attempt to read) |
-| CSV has duplicate `sample_id` | Two rows share the same ID | Ensure `sample_id` is unique per row |
-| `data_path` not found | Path in CSV does not exist | Check if the path is absolute or relative to the working directory |
-| `No module named 'rpy2'` | Missing R-bridge dependencies | Ensure you activated your environment and ran the install steps above |
+| :--- | :--- | :--- |
+| `CSV uses semicolons` | The script detected semicolon delimiters |  The script will attempt to read it, but re-saving as a standard comma-separated CSV is recommended. |
+| `allowed_genes is empty` | GTF biotypes don't match script filters | Ensure your GTF uses `protein_coding` and `lncRNA` as the `gene_biotype`. |
+| `unsafe for R interpolation` | RDS path contains quotes or newlines |  Ensure the `output_root` or study names do not contain special characters that break R string literals. |
 
 ---
 
