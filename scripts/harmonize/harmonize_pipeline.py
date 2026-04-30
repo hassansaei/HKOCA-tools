@@ -30,8 +30,9 @@ Options
                      harmonized/, rds/) are created inside it automatically.
                      Overrides [paths] output_root and OUTPUT_ROOT env var.
     --transgenes LIST
-                     Comma-separated gene/reporter names to include in the
-                     reference gene set (e.g. --transgenes EGFP,MCHERRY).
+                     Comma-separated gene names to preserve in the reference
+                     gene set (e.g. --transgenes EGFP,mCherry,Cre).
+                     Use the exact gene name as it appears in your count matrix.
                      Can also be set via [transgenes] names = ... in the
                      config file.
     --to-rds         After harmonizing, convert each study's h5ad to a
@@ -339,12 +340,43 @@ def geo_redownload(folder: str, prefix: str, sample_id: str, feature_file: str =
 # SAMPLE LOADER
 # ─────────────────────────────────────────────────────────────────────────────
 
-META_COLS = [
-    "sample_id", "study", "source", "species", "tissue", "diff_protocol", "sc_protocol",
-    "sequencing", "genome_build", "Age", "type", "disease", "condition",
+# Columns that every metadata CSV must contain.
+MANDATORY_META_COLS = [
+    "data_path", "sample_id", "study", "source",
+    "diff_protocol", "sc_protocol", "sequencing", "genome_build", "Age", "type",
 ]
 
-def load_sample(row: pd.Series, working_dir: str | None = None) -> sc.AnnData:
+# Optional pipeline-control columns: recognised when present but never written to obs.
+#   file_prefix : MTX folder prefix (e.g. "sample1_"); defaults to "" when absent.
+#   output_dir  : per-study output path, only used when --output is not supplied on the CLI.
+#   skip        : set to "True" to exclude a row from the run.
+_OPTIONAL_PIPELINE_COLS = {"file_prefix", "output_dir", "skip"}
+
+# All columns that must never be written to AnnData obs.
+_NON_OBS_COLS = {"data_path"} | _OPTIONAL_PIPELINE_COLS
+
+def _get_obs_cols(df: pd.DataFrame) -> list:
+    """Return all columns from *df* that should be written to AnnData .obs.
+
+    Mandatory columns that carry biological/metadata meaning are included first
+    (in their declared order), followed by any additional optional columns the
+    user has added, excluding pipeline-control columns (data_path, file_prefix,
+    output_dir, skip).
+    """
+    mandatory_obs = [c for c in MANDATORY_META_COLS if c not in _NON_OBS_COLS]
+    optional_obs  = [c for c in df.columns
+                     if c not in MANDATORY_META_COLS and c not in _NON_OBS_COLS]
+    # Preserve order: mandatory first, then optional, deduplicated
+    seen = set()
+    ordered = []
+    for c in mandatory_obs + optional_obs:
+        if c not in seen and c in df.columns:
+            seen.add(c)
+            ordered.append(c)
+    return ordered
+
+def load_sample(row: pd.Series, working_dir: str | None = None,
+                obs_cols: list | None = None) -> sc.AnnData:
     path = str(row["data_path"]).strip()
     if not path:
         raise ValueError("data_path is empty")
@@ -387,7 +419,10 @@ def load_sample(row: pd.Series, working_dir: str | None = None) -> sc.AnnData:
     adata.obs_names_make_unique()
     adata.var_names_make_unique()
 
-    for col in META_COLS:
+    cols_to_write = obs_cols if obs_cols is not None else [
+        c for c in MANDATORY_META_COLS if c not in _NON_OBS_COLS
+    ]
+    for col in cols_to_write:
         val = row.get(col, "")
         if pd.notna(val) and str(val).strip():
             adata.obs[col] = str(val).strip()
@@ -415,28 +450,7 @@ def harmonize_matrix_sparse(adata: sc.AnnData, allowed_genes: set) -> sc.AnnData
         adata.X = sp.csr_matrix(adata.X)
 
     target_genes = sorted(allowed_genes)
-    
-    # === NEW TRANSGENE DISCOVERY STEP ===
-    sample_genes = set(adata.var_names.tolist())
-    common_genes = sorted(sample_genes & allowed_genes)
-    
-    extra_genes = sample_genes.difference(allowed_genes)
-    if extra_genes:
-        transgene_patterns = ('AAV', 'GFP', 'MCHERRY', 'TDTOMATO', 'ERCC-', 'HTO', 'CRE')
-        potential_transgenes = [
-            g for g in extra_genes 
-            if any(pattern in g.upper() for pattern in transgene_patterns)
-        ]
-        if potential_transgenes:
-            logger.warning(
-                f"ALERT: Dropping {len(potential_transgenes)} potential transgenes/reporters "
-                f"because they are absent from the GTF: {potential_transgenes[:10]}..."
-            )
-            logger.warning(
-                "If you need to preserve these, restart the pipeline and pass them "
-                f"via the CLI: --transgenes {','.join(potential_transgenes[:3])}"
-            )
-    # ====================================
+    common_genes = sorted(set(adata.var_names.tolist()) & allowed_genes)
 
     gene_to_idx = {g: i for i, g in enumerate(target_genes)}
     sub         = adata[:, common_genes].copy()
@@ -472,11 +486,26 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path, sep=sep, keep_default_na=False, encoding="utf-8")
     df.columns = df.columns.str.strip()
 
-    required = ["data_path", "sample_id", "study"]
+    required = list(MANDATORY_META_COLS)
     missing  = [c for c in required if c not in df.columns]
     if missing:
         logger.error(f"CSV missing required columns: {missing}")
         raise ValueError(f"CSV missing required columns: {missing}")
+
+    # Warn (not error) when optional pipeline-control columns are absent so the
+    # user knows which defaults will be applied.
+    if "file_prefix" not in df.columns:
+        logger.info("Column 'file_prefix' not found — defaulting to no prefix for all samples.")
+    if "output_dir" not in df.columns:
+        logger.info(
+            "Column 'output_dir' not found — per-study output paths will be derived from "
+            "--output / output_root config. Pass --output or add the column if needed."
+        )
+
+    optional_cols = [c for c in df.columns
+                     if c not in MANDATORY_META_COLS and c not in _NON_OBS_COLS]
+    if optional_cols:
+        logger.info(f"Optional metadata columns detected and will be propagated to obs: {optional_cols}")
 
     if "skip" in df.columns:
         n_skip = (df["skip"].astype(str).str.strip().str.lower() == "true").sum()
@@ -618,6 +647,9 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
     df_meta = load_metadata_csv(metadata_csv)
     logger.info(f"CSV loaded: {len(df_meta)} sample rows, {df_meta['study'].nunique()} unique studies")
 
+    obs_cols = _get_obs_cols(df_meta)
+    logger.debug(f"Columns propagated to AnnData obs: {obs_cols}")
+
     study_groups = collections.OrderedDict()
     for _, row in df_meta.iterrows():
         study_groups.setdefault(row["study"], []).append(row)
@@ -654,7 +686,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
         for row in rows:
             sample_id = row.get('sample_id', '?')
             try:
-                adata = load_sample(row, working_dir=working_dir)
+                adata = load_sample(row, working_dir=working_dir, obs_cols=obs_cols)
                 adatas.append(adata)
                 logger.info(f"Loaded sample {sample_id} → {adata.shape}")
             except Exception as e:
@@ -719,14 +751,26 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
 # SUMMARY & PLOTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_obs_meta(obs: pd.DataFrame, col: str) -> str:
+def _get_obs_meta(obs: pd.DataFrame, col: str,
+                  warned_missing: set | None = None) -> str:
     """Return a representative string value from one obs column of a backed h5ad.
 
     Returns ``"Unknown"`` when the column is absent or contains only NaN/nan.
     Returns the single unique value when all cells agree, otherwise a
     comma-separated sorted list of unique values.
+
+    When *warned_missing* is supplied (a set shared across calls for the same
+    file), a warning is emitted the first time a column is found to be absent,
+    so the user knows which expected fields are missing from their data.
     """
     if col not in obs.columns:
+        if warned_missing is not None and col not in warned_missing:
+            logger.warning(
+                f"Summary: expected obs column '{col}' not found in this dataset — "
+                "it will appear as 'Unknown' in the report. "
+                "Add it to your metadata CSV as an optional column if needed."
+            )
+            warned_missing.add(col)
         return "Unknown"
     vals = [
         str(v) for v in obs[col].unique()
@@ -772,22 +816,23 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
     logger.info(f"Scanning {len(h5ad_files)} harmonized h5ad files for summary report...")
 
     rows = []
+    warned_missing: set = set()
     for fpath in h5ad_files:
         try:
             ad  = sc.read_h5ad(fpath, backed="r")
             obs = ad.obs
-            study_id = _get_obs_meta(obs, "study") or os.path.basename(fpath).replace(".h5ad", "")
+            study_id = _get_obs_meta(obs, "study", warned_missing) or os.path.basename(fpath).replace(".h5ad", "")
             rows.append({
                 "File":       os.path.basename(fpath),
                 "Path":       fpath,
                 "Study":      study_id,
                 "Cells":      int(ad.n_obs),
                 "Genes":      int(ad.n_vars),
-                "Protocol":   _get_obs_meta(obs, "diff_protocol"),
-                "Age":        _get_obs_meta(obs, "Age"),
-                "Technology": _get_obs_meta(obs, "sc_protocol"),
-                "Source":     _get_obs_meta(obs, "source"),
-                "Disease":    _get_obs_meta(obs, "disease"),
+                "Protocol":   _get_obs_meta(obs, "diff_protocol", warned_missing),
+                "Age":        _get_obs_meta(obs, "Age", warned_missing),
+                "Technology": _get_obs_meta(obs, "sc_protocol", warned_missing),
+                "Source":     _get_obs_meta(obs, "source", warned_missing),
+                "Disease":    _get_obs_meta(obs, "disease", warned_missing),
             })
         except Exception as e:
             logger.warning(f"Skipping summary for {fpath}: {e}")
