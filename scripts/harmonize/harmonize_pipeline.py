@@ -546,11 +546,14 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
     """Converts a saved .h5ad file directly to a Seurat .rds object using rpy2."""
     try:
         import rpy2.robjects as ro
-        from rpy2.robjects import pandas2ri
+        from rpy2.robjects import default_converter, pandas2ri
+        from rpy2.robjects.conversion import localconverter
         import anndata2ri
         import gc
-        
-        pandas2ri.activate()
+
+        # rpy2 >= 3.5.x removed pandas2ri.activate(); use a localconverter
+        # context that combines the default, pandas, and anndata2ri converters.
+        py2r_converter = default_converter + pandas2ri.converter + anndata2ri.converter
         logger.info(f"Starting Seurat conversion for {os.path.basename(h5ad_path)}...")
         
         adata = sc.read_h5ad(h5ad_path)
@@ -591,7 +594,7 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
                 f"rds_path contains characters unsafe for R interpolation: {rds_path!r}"
             )
 
-        with ro.conversion.localconverter(anndata2ri.converter):
+        with localconverter(py2r_converter):
             ro.globalenv["adata_sce"] = clean_adata
 
         ro.r(f'''

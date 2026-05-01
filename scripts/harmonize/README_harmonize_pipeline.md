@@ -45,13 +45,18 @@ conda activate harmonize_env
 > **Note:** Installing R via Conda ensures rpy2 can find the correct system libraries.
 
 ```bash
-conda install -c conda-forge -c bioconda r-base=4.3 r-seurat bioconductor-singlecellexperiment -y
+conda install -c conda-forge -c bioconda r-base r-seurat bioconductor-singlecellexperiment r-seuratobject -y
 ```
 
 ### Step 3: Install all Python dependencies
 
 ```bash
-pip install scanpy anndata pandas numpy scipy h5py seaborn matplotlib rpy2 anndata2ri
+pip install scanpy anndata pandas numpy scipy h5py seaborn matplotlib 'rpy2==3.6.3' 'anndata2ri==2.0'
+```
+### Step4: Install all required R Bioconductor packages for anndata2ri
+
+```bash
+R -e 'if (!require("BiocManager", quietly=TRUE)) install.packages("BiocManager", repos="https://cloud.r-project.org"); BiocManager::install(c("S4Vectors","SingleCellExperiment","SummarizedExperiment","DelayedArray","Matrix"), update=FALSE, ask=FALSE); if (!require("Seurat", quietly=TRUE)) install.packages("Seurat", repos="https://cloud.r-project.org")'
 ```
 
 > **Note:** The script uses "lazy loading." If you absolutely cannot install R, you can skip Step 2 and just install the Python packages. The script will safely skip the .rds conversion step without crashing.
