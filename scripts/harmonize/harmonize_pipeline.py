@@ -819,16 +819,43 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
     logger.info(f"Scanning {len(h5ad_files)} harmonized h5ad files for summary report...")
 
     rows = []
+    sample_rows = []
     warned_missing: set = set()
     for fpath in h5ad_files:
         try:
             ad  = sc.read_h5ad(fpath, backed="r")
             obs = ad.obs
             study_id = _get_obs_meta(obs, "study", warned_missing) or os.path.basename(fpath).replace(".h5ad", "")
+
+            # Per-sample cell counts within this study (defaults to a single
+            # "Unknown" sample when the column is absent).
+            if "sample_id" in obs.columns:
+                sid_counts = (
+                    obs["sample_id"].astype(str).fillna("Unknown")
+                       .replace({"": "Unknown", "nan": "Unknown"})
+                       .value_counts()
+                )
+            else:
+                if "sample_id" not in warned_missing:
+                    logger.warning(
+                        "Summary: 'sample_id' not found — per-sample plot will "
+                        "treat each dataset as a single sample."
+                    )
+                    warned_missing.add("sample_id")
+                sid_counts = pd.Series({study_id: int(ad.n_obs)})
+
+            for sid, n in sid_counts.items():
+                sample_rows.append({
+                    "Study":     study_id,
+                    "SampleID":  str(sid),
+                    "Cells":     int(n),
+                })
+
             rows.append({
                 "File":       os.path.basename(fpath),
                 "Path":       fpath,
                 "Study":      study_id,
+                "Samples":    int(len(sid_counts)),
                 "Cells":      int(ad.n_obs),
                 "Genes":      int(ad.n_vars),
                 "Protocol":   _get_obs_meta(obs, "diff_protocol", warned_missing),
@@ -850,6 +877,22 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
     df.to_csv(summary_csv, index=False)
     logger.info(f"Summary table saved: {summary_csv}")
 
+    # Per-sample table: ordered by study (largest study first), then by cells.
+    df_samples = pd.DataFrame(sample_rows)
+    if not df_samples.empty:
+        study_order = df["Study"].tolist()
+        df_samples["_study_rank"] = df_samples["Study"].map(
+            {s: i for i, s in enumerate(study_order)}
+        ).fillna(len(study_order)).astype(int)
+        df_samples = (df_samples
+                      .sort_values(["_study_rank", "Cells", "SampleID"],
+                                   ascending=[True, False, True])
+                      .drop(columns="_study_rank")
+                      .reset_index(drop=True))
+        samples_csv = os.path.join(report_dir, "samples_summary.csv")
+        df_samples.to_csv(samples_csv, index=False)
+        logger.info(f"Per-sample table saved: {samples_csv}")
+
     total_cells = int(df["Cells"].sum())
     
     print(f"\n{'='*88}")
@@ -858,7 +901,7 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
     print(f"Total cells          : {total_cells:,}")
     print(f"Mean genes / dataset : {df['Genes'].mean():,.0f}")
     print("\nTop datasets by cell count:")
-    print(df[["Study","Cells","Genes","Protocol","Age","Technology"]].head(10).to_string(index=False))
+    print(df[["Study","Samples","Cells","Genes","Protocol","Age","Technology"]].head(10).to_string(index=False))
     print("\n")
 
     def save_fig(fig, stem):
@@ -901,6 +944,41 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
         ax.grid(axis="x", linestyle="--", alpha=0.4)
         fig.tight_layout()
         save_fig(fig, "cells_by_age")
+        plt.close(fig)
+
+    # ── Plot 3: cells per sample, grouped & colored by study
+    if not df_samples.empty:
+        studies      = list(dict.fromkeys(df_samples["Study"].tolist()))
+        study_palette = dict(zip(studies, sns.color_palette("tab20", n_colors=len(studies))))
+        bar_colors   = [study_palette[s] for s in df_samples["Study"]]
+
+        # Reverse so the first study (largest) appears at the top of the chart.
+        labels = [f"{sid}  ({st})" for st, sid in
+                  zip(df_samples["Study"][::-1], df_samples["SampleID"][::-1])]
+        values = df_samples["Cells"][::-1]
+        colors_rev = bar_colors[::-1]
+
+        fig, ax = plt.subplots(figsize=(14, max(6, 0.28 * len(df_samples))))
+        ax.barh(labels, values, color=colors_rev, edgecolor="black", linewidth=0.4)
+        ax.set_title(
+            f"Cells per Sample  "
+            f"({len(df_samples)} samples across {len(studies)} datasets)",
+            fontweight="bold",
+        )
+        ax.set_xlabel("Number of cells")
+        ax.set_ylabel("Sample  (Study)")
+        ax.grid(axis="x", linestyle="--", alpha=0.4)
+
+        # One legend entry per study so the color mapping is readable.
+        legend_handles = [
+            plt.Rectangle((0, 0), 1, 1, color=study_palette[s], ec="black", lw=0.4)
+            for s in studies
+        ]
+        ax.legend(legend_handles, studies, title="Study",
+                  loc="lower right", frameon=True, fontsize="small")
+
+        fig.tight_layout()
+        save_fig(fig, "cells_per_sample")
         plt.close(fig)
 
     logger.info(f"All report artifacts written to: {report_dir}/")
