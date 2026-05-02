@@ -940,26 +940,145 @@ make_scatter <- function(x, y, x_label, y_label, title,
 }
 
 # ── Violin (avoids Seurat v5 S4 slot bug) ────────────────────────────────────
-make_violin <- function(obj, feat, title, max_y, cutoff_l = NULL, cutoff_h = NULL) {
-    df <- data.frame(x = "cells", y = as.numeric(obj@meta.data[[feat]]))
-    p  <- ggplot(df, aes(x = x, y = y)) +
-        geom_violin(fill = "#4C8BE0", color = NA, alpha = 0.8, scale = "width") +
-        geom_jitter(width = 0.2, size = 0.1, alpha = 0.15, color = "grey30") +
-        scale_y_continuous(limits = c(0, max_y), oob = scales::squish) +
-        labs(x = NULL, y = feat, title = title) +
-        theme_bw() +
-        theme(
-            plot.background  = element_rect(fill = "white", color = NA),
-            panel.background = element_rect(fill = "white", color = "grey80"),
-            axis.text.x      = element_text(hjust = 0.5, angle = 0),
-            legend.position  = "none",
-            plot.title       = element_text(size = 9, face = "bold")
-        )
+# When `group_col` names an existing metadata column, draw one violin per
+# group level (e.g. one per sample_id); otherwise fall back to the original
+# single-violin combined view.
+make_violin <- function(obj, feat, title, max_y, cutoff_l = NULL, cutoff_h = NULL,
+                        group_col = NULL) {
+    has_group <- !is.null(group_col) && nzchar(group_col) &&
+                 group_col %in% colnames(obj@meta.data) &&
+                 length(unique(na.omit(obj@meta.data[[group_col]]))) > 1
+
+    if (has_group) {
+        grp <- as.character(obj@meta.data[[group_col]])
+        grp[is.na(grp) | !nzchar(trimws(grp))] <- "unassigned"
+        df  <- data.frame(x = grp, y = as.numeric(obj@meta.data[[feat]]),
+                          stringsAsFactors = FALSE)
+        df  <- df[is.finite(df$y), , drop = FALSE]
+        # Stable ordering by group label so plots are comparable raw vs filtered
+        df$x <- factor(df$x, levels = sort(unique(df$x)))
+
+        n_grp <- nlevels(df$x)
+        x_lbl <- group_col
+        title <- sprintf("%s  (n_%s = %d)", title, group_col, n_grp)
+
+        p <- ggplot(df, aes(x = x, y = y, fill = x)) +
+            geom_violin(color = NA, alpha = 0.85, scale = "width", trim = FALSE) +
+            geom_jitter(width = 0.2, size = 0.1, alpha = 0.10, color = "grey25") +
+            scale_y_continuous(limits = c(0, max_y), oob = scales::squish) +
+            scale_fill_viridis_d(option = "turbo", end = 0.92) +
+            labs(x = x_lbl, y = feat, title = title) +
+            theme_bw() +
+            theme(
+                plot.background  = element_rect(fill = "white", color = NA),
+                panel.background = element_rect(fill = "white", color = "grey80"),
+                axis.text.x      = element_text(angle = 45, hjust = 1, size = 7),
+                axis.text.y      = element_text(size = 7),
+                legend.position  = "none",
+                plot.title       = element_text(size = 9, face = "bold")
+            )
+    } else {
+        df <- data.frame(x = "cells", y = as.numeric(obj@meta.data[[feat]]))
+        p  <- ggplot(df, aes(x = x, y = y)) +
+            geom_violin(fill = "#4C8BE0", color = NA, alpha = 0.8, scale = "width") +
+            geom_jitter(width = 0.2, size = 0.1, alpha = 0.15, color = "grey30") +
+            scale_y_continuous(limits = c(0, max_y), oob = scales::squish) +
+            labs(x = NULL, y = feat, title = title) +
+            theme_bw() +
+            theme(
+                plot.background  = element_rect(fill = "white", color = NA),
+                panel.background = element_rect(fill = "white", color = "grey80"),
+                axis.text.x      = element_text(hjust = 0.5, angle = 0),
+                legend.position  = "none",
+                plot.title       = element_text(size = 9, face = "bold")
+            )
+    }
+
     if (!is.null(cutoff_l) && is.finite(cutoff_l))
         p <- p + geom_hline(yintercept = cutoff_l, linewidth = 0.5, color = "red")
     if (!is.null(cutoff_h) && is.finite(cutoff_h))
         p <- p + geom_hline(yintercept = cutoff_h, linewidth = 0.5, color = "red")
     p
+}
+
+# ── Per-sample faceted density scatter ───────────────────────────────────────
+# Same density-coloured scatter as `make_scatter`, but split into one panel
+# per sample (or any grouping vector). Used alongside the combined view.
+make_scatter_facet <- function(x, y, group, x_label, y_label, title,
+                               max_x, max_y,
+                               cutoff_l = NULL, cutoff_h = NULL,
+                               show_cutoffs = TRUE) {
+    grp <- as.character(group)
+    grp[is.na(grp) | !nzchar(trimws(grp))] <- "unassigned"
+    df_all <- data.frame(X1 = x, X2 = y, sample = grp,
+                         stringsAsFactors = FALSE)
+    df_all <- df_all[is.finite(df_all$X1) & is.finite(df_all$X2), , drop = FALSE]
+    if (nrow(df_all) == 0)
+        return(ggplot() + theme_void() + ggtitle(title))
+
+    # Compute density per sample so colour scale is comparable within each panel
+    df_all <- do.call(rbind, lapply(split(df_all, df_all$sample), function(d) {
+        d$dens <- point_density(d$X1, d$X2)
+        d
+    }))
+    finite_dens <- df_all$dens[is.finite(df_all$dens)]
+    dens_limit  <- if (length(finite_dens) == 0 || max(finite_dens) == 0) 1 else {
+        dl <- quantile(finite_dens, 0.99)
+        if (!is.finite(dl) || dl <= 0) max(finite_dens) else dl
+    }
+
+    n_grp <- length(unique(df_all$sample))
+    ncol_facet <- min(4, max(1, n_grp))
+
+    use_raster <- nrow(df_all) > 50000 && requireNamespace("ggrastr", quietly = TRUE)
+    geom_pts   <- if (use_raster) ggrastr::geom_point_rast(size = 0.3, raster.dpi = 300)
+                  else            geom_point(size = 0.3)
+
+    p <- ggplot(df_all, aes(x = X1, y = X2, color = dens)) +
+        geom_pts +
+        facet_wrap(~sample, ncol = ncol_facet) +
+        scale_x_continuous(limits = c(0, max_x), oob = scales::squish) +
+        scale_y_continuous(limits = c(0, max_y), oob = scales::squish) +
+        scale_color_viridis_c(option = "magma", na.value = "grey70",
+                              limits = c(0, dens_limit), oob = scales::squish) +
+        labs(x = x_label, y = y_label, color = "Density") +
+        ggtitle(sprintf("%s  (per-sample)", title)) +
+        theme_bw() +
+        theme(
+            plot.background  = element_rect(fill = "white", color = NA),
+            panel.background = element_rect(fill = "white", color = "grey80"),
+            panel.grid.major = element_line(color = "grey92"),
+            panel.grid.minor = element_blank(),
+            plot.title       = element_text(size = 9, face = "bold"),
+            strip.text       = element_text(size = 7, face = "bold"),
+            axis.title       = element_text(size = 8),
+            axis.text        = element_text(size = 7),
+            legend.position  = "bottom",
+            legend.title     = element_text(size = 7, face = "bold"),
+            legend.text      = element_text(size = 6)
+        ) +
+        guides(color = guide_colourbar(barwidth = 8, barheight = 0.5))
+
+    if (show_cutoffs && !is.null(cutoff_l) && is.finite(cutoff_l))
+        p <- p + geom_hline(yintercept = cutoff_l, linewidth = 0.5, color = "red", linetype = "dashed")
+    if (show_cutoffs && !is.null(cutoff_h) && is.finite(cutoff_h))
+        p <- p + geom_hline(yintercept = cutoff_h, linewidth = 0.5, color = "red", linetype = "dashed")
+    p
+}
+
+# Auto-detect a per-sample grouping column. Returns the first column from
+# (sample_id, orig.ident, donor, donor_id, library_id, Sample) that exists in
+# `meta` and has more than one unique non-empty value. NULL if none qualify.
+.detect_qc_group_col <- function(meta) {
+    candidates <- c("sample_id", "orig.ident", "donor", "donor_id",
+                    "library_id", "Sample", "sample")
+    for (col in candidates) {
+        if (!(col %in% colnames(meta))) next
+        vals <- as.character(meta[[col]])
+        vals <- vals[!is.na(vals) & nzchar(trimws(vals))]
+        if (length(unique(vals)) > 1) return(col)
+    }
+    NULL
 }
 
 # ── Audit density (PDF before/after pages) ───────────────────────────────────
@@ -1286,7 +1405,23 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             max_map <- c(nFeature_RNA = max.ft, percent.mito = max.mt,
                          percent.ribo = max.rb, nCount_RNA   = max.ct)
 
-            # 16 PNGs per dataset (raw + filtered × violin + scatter × 4 features)
+            # Auto-detect a per-sample grouping column (sample_id, orig.ident,
+            # donor, ...). When found and the dataset has >1 sample, the loop
+            # below emits an extra "by_sample" violin + faceted scatter PNG
+            # alongside the original combined-cell views. No config required.
+            qc_group_col <- .detect_qc_group_col(obj@meta.data)
+            n_qc_groups  <- if (!is.null(qc_group_col))
+                                length(unique(na.omit(obj@meta.data[[qc_group_col]])))
+                            else 1L
+            emit_per_sample <- !is.null(qc_group_col) && n_qc_groups > 1
+            # Per-sample violins need wider canvas (≈1" per sample, capped at 18").
+            violin_width_grp <- min(max(7, 1.0 * n_qc_groups), 18)
+            # Faceted scatters use a 4-column grid → width grows with rows.
+            scatter_facet_w  <- min(4, n_qc_groups) * 3.2
+            scatter_facet_h  <- ceiling(n_qc_groups / 4) * 3.0 + 1
+
+            # 16 PNGs per dataset minimum (raw + filtered × violin + scatter ×
+            # 4 features); +16 more when emit_per_sample is TRUE.
             for (feat in feat_list) {
                 cutoff.l <- cutoffs[[feat]]["lower"]
                 cutoff.h <- cutoffs[[feat]]["upper"]
@@ -1295,11 +1430,16 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                 if (feat != "nCount_RNA") {
                     x_vals <- as.numeric(obj$nCount_RNA);    y_vals <- as.numeric(obj@meta.data[[feat]]); x_lbl <- "nCount_RNA"
                     xf     <- as.numeric(fobj$nCount_RNA);   yf     <- as.numeric(fobj@meta.data[[feat]])
+                    grp_r  <- obj@meta.data[[qc_group_col]]  %||% NULL
+                    grp_f  <- fobj@meta.data[[qc_group_col]] %||% NULL
                 } else {
                     x_vals <- as.numeric(obj$nFeature_RNA);  y_vals <- as.numeric(obj$nCount_RNA);        x_lbl <- "nFeature_RNA"
                     xf     <- as.numeric(fobj$nFeature_RNA); yf     <- as.numeric(fobj$nCount_RNA)
+                    grp_r  <- obj@meta.data[[qc_group_col]]  %||% NULL
+                    grp_f  <- fobj@meta.data[[qc_group_col]] %||% NULL
                 }
 
+                # Combined views (always emitted — original behaviour).
                 p.v   <- make_violin(obj,  feat, nm, max.y, cutoff.l, cutoff.h)
                 p.s   <- make_scatter(x_vals, y_vals, x_lbl, feat, nm, max.ct, max.y, cutoff.l, cutoff.h, show_cutoffs = TRUE)
                 p.v.f <- make_violin(fobj, feat, nm, max.y)
@@ -1309,8 +1449,38 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                 ggsave(file.path(QC_DIR, nm, paste0("Plot_qc.raw.",        feat, ".png")), p.s,   width = 6, height = 5, dpi = 150, bg = "white")
                 ggsave(file.path(QC_DIR, nm, paste0("Violin_qc.filtered.", feat, ".png")), p.v.f, width = 6, height = 5, dpi = 150, bg = "white")
                 ggsave(file.path(QC_DIR, nm, paste0("Plot_qc.filtered.",   feat, ".png")), p.s.f, width = 6, height = 5, dpi = 150, bg = "white")
+
+                # Per-sample views (only when the dataset actually has >1 sample).
+                if (emit_per_sample) {
+                    p.v.bs   <- make_violin(obj,  feat, nm, max.y, cutoff.l, cutoff.h,
+                                            group_col = qc_group_col)
+                    p.s.bs   <- make_scatter_facet(x_vals, y_vals, grp_r, x_lbl, feat, nm,
+                                                   max.ct, max.y, cutoff.l, cutoff.h,
+                                                   show_cutoffs = TRUE)
+                    p.v.f.bs <- make_violin(fobj, feat, nm, max.y,
+                                            group_col = qc_group_col)
+                    p.s.f.bs <- make_scatter_facet(xf, yf, grp_f, x_lbl, feat, nm,
+                                                   max.ct, max.y, NULL, NULL,
+                                                   show_cutoffs = FALSE)
+
+                    ggsave(file.path(QC_DIR, nm, paste0("Violin_qc.raw.by_sample.",      feat, ".png")),
+                           p.v.bs,   width = violin_width_grp, height = 5, dpi = 150, bg = "white")
+                    ggsave(file.path(QC_DIR, nm, paste0("Plot_qc.raw.by_sample.",        feat, ".png")),
+                           p.s.bs,   width = scatter_facet_w,  height = scatter_facet_h, dpi = 150, bg = "white")
+                    ggsave(file.path(QC_DIR, nm, paste0("Violin_qc.filtered.by_sample.", feat, ".png")),
+                           p.v.f.bs, width = violin_width_grp, height = 5, dpi = 150, bg = "white")
+                    ggsave(file.path(QC_DIR, nm, paste0("Plot_qc.filtered.by_sample.",   feat, ".png")),
+                           p.s.f.bs, width = scatter_facet_w,  height = scatter_facet_h, dpi = 150, bg = "white")
+                }
             }
-            log_info(sprintf("  PNGs: 16 files → %s", file.path(QC_DIR, nm)))
+            log_info(sprintf("  PNGs: %d files → %s%s",
+                             if (emit_per_sample) 32L else 16L,
+                             file.path(QC_DIR, nm),
+                             if (emit_per_sample)
+                                 sprintf("  (per-sample plots split by '%s', %d samples)",
+                                         qc_group_col, n_qc_groups)
+                             else
+                                 "  (single-sample dataset — no per-sample split)"))
 
             # PDF audit — BEFORE page
             p1_b <- plot_dist(meta_raw, "nFeature_RNA", paste("Raw nFeature:", nm), feat_lower,  feat_upper,  TRUE,  "lightblue")
