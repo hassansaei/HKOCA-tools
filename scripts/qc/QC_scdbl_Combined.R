@@ -1159,8 +1159,35 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                              class(obj_raw[["RNA"]])))
 
             # Extract everything we need directly from slots,
-            # bypassing all S4 method dispatch
-            cm       <- slot(obj_raw[["RNA"]], "counts")
+            # bypassing all S4 method dispatch.
+            # Seurat v4 (Assay) keeps counts in @counts; Seurat v5 (Assay5)
+            # stores them in @layers[["counts"]] (or a split layer like
+            # "counts.1"). Try v4 first, fall back to v5 layers, and finally
+            # to GetAssayData() which handles both classes.
+            assay_obj <- obj_raw[["RNA"]]
+            cm <- tryCatch(slot(assay_obj, "counts"), error = function(e) NULL)
+            if (is.null(cm) || (is(cm, "Matrix") && length(cm@x) == 0) ||
+                (is.matrix(cm) && length(cm) == 0)) {
+                if (.hasSlot(assay_obj, "layers")) {
+                    layers <- slot(assay_obj, "layers")
+                    layer_nm <- if ("counts" %in% names(layers)) "counts"
+                                else grep("^counts(\\.|$)", names(layers), value = TRUE)[1]
+                    if (!is.null(layer_nm) && !is.na(layer_nm)) {
+                        cm <- layers[[layer_nm]]
+                        # v5 split layers may carry only a subset of cells/features;
+                        # ensure dimnames are aligned with the assay's full barcode set.
+                        if (is.null(rownames(cm)) || is.null(colnames(cm))) {
+                            feats <- slot(assay_obj, "features")
+                            cells <- slot(assay_obj, "cells")
+                            rownames(cm) <- rownames(feats)[feats[, layer_nm]]
+                            colnames(cm) <- rownames(cells)[cells[, layer_nm]]
+                        }
+                    }
+                }
+            }
+            if (is.null(cm))
+                cm <- GetAssayData(obj_raw, assay = "RNA", layer = "counts")
+
             meta_in  <- as.data.frame(obj_raw@meta.data)
             barcodes <- colnames(cm)
             genes    <- rownames(cm)
@@ -1195,7 +1222,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             
             
 
-            # Remove empty barcodes
+            
            # Remove empty barcodes
             nCount_vec   <- as.numeric(obj@meta.data[["nCount_RNA"]])
             nFeature_vec <- as.numeric(obj@meta.data[["nFeature_RNA"]])
