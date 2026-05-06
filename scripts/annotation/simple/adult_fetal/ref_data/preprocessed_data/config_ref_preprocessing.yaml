@@ -1,0 +1,269 @@
+# =============================================================================
+#  config.yaml — Reference Preprocessing Pipeline
+# =============================================================================
+#
+#  Every tunable parameter lives here.  Edit this file to adapt the pipeline
+#  to your data; you should never need to touch ref_preprocessing.py.
+#
+#  Sections:
+#    paths            — where to find inputs and where to write outputs
+#    obs_columns      — which .obs column holds cell-type labels in each dataset
+#    logging          — verbosity and optional log file
+#    scanpy           — global scanpy settings
+#    qc               — cell/gene filtering thresholds
+#    hvg              — highly variable gene selection
+#    pca              — dimensionality reduction settings
+#    noise_genes      — gene prefixes / exact names to strip before marker tests
+#    cell_type_filter — minimum cells per cell type
+#    cell_type_removal— immune / non-kidney contaminants to drop up front
+#    rescue           — marker panels for re-labelling generic fetal cells
+#    harmonization_map— cross-stage label reconciliation
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+#  Paths
+#  Use absolute paths or paths relative to the directory you run the script from.
+#  Do NOT commit actual paths to a shared repo — set them in a local .env or
+#  override via the CONFIG_PATH environment variable to point at a personal copy.
+# ---------------------------------------------------------------------------
+paths:
+  # Input: raw .h5ad files for each developmental stage
+  adult_h5ad: "ref_data/Adult.h5ad"
+  fetal_h5ad: "ref_data/Fetal.h5ad"
+
+  # Output: all TSV summaries and mapping tables land here
+  out_dir: "ref_data/preprocessed_data/Summary"
+
+  # Output: preprocessed + harmonized .h5ad files land here
+  preprocessed_dir: "ref_data/preprocessed_data"
+
+
+# ---------------------------------------------------------------------------
+#  Observation (cell metadata) column names
+#  These are the column names inside .obs that carry cell-type labels.
+#  They get renamed to 'cell_type' internally, so the rest of the pipeline
+#  doesn't need to know the original names.
+# ---------------------------------------------------------------------------
+obs_columns:
+  adult_celltype: "cell_type"
+  fetal_celltype: "cell_type"
+
+
+# ---------------------------------------------------------------------------
+#  Logging
+#  level: DEBUG | INFO | WARNING | ERROR
+#  file:  set to a path (e.g. "logs/run.log") to also write logs to disk,
+#         or leave as null to log to stdout only.
+# ---------------------------------------------------------------------------
+logging:
+  level: "INFO"
+  file: null                # e.g. "logs/preprocessing.log"
+
+
+# ---------------------------------------------------------------------------
+#  Scanpy global settings
+#  n_jobs: number of parallel workers; -1 means "use all available cores"
+# ---------------------------------------------------------------------------
+scanpy:
+  n_jobs: -1
+
+
+# ---------------------------------------------------------------------------
+#  QC filters
+#  min_genes_per_cell: drop cells expressing fewer than N genes
+#                      (catches empty droplets and very low-quality cells)
+#  min_cells_per_gene: drop genes expressed in fewer than N cells
+#                      (removes near-absent genes that add noise without signal)
+# ---------------------------------------------------------------------------
+qc:
+  min_genes_per_cell: 200
+  min_cells_per_gene: 3
+
+
+# ---------------------------------------------------------------------------
+#  Highly Variable Gene (HVG) selection
+#  n_top_genes: how many HVGs to keep for PCA / downstream analysis
+#               3000 is a sensible default for kidney references of this size;
+#               increase if you have very complex datasets with many subtypes.
+# ---------------------------------------------------------------------------
+hvg:
+  n_top_genes: 3000
+
+
+# ---------------------------------------------------------------------------
+#  PCA / dimensionality reduction
+#  n_comps:           number of PCA components to compute
+#  n_pcs_neighbors:   how many of those PCs to use when building the k-NN graph
+#                     (capped at n_comps if less data is available)
+#  scale_max_value:   clip scaled expression values at this absolute magnitude
+#                     to prevent outlier genes from dominating PCA
+#  svd_solver:        "arpack" is stable and memory-efficient for typical sizes
+#  random_state:      set to any integer for reproducibility; change to re-sample
+# ---------------------------------------------------------------------------
+pca:
+  n_comps: 50
+  n_pcs_neighbors: 30
+  scale_max_value: 10
+  svd_solver: "arpack"
+  random_state: 42
+
+
+# ---------------------------------------------------------------------------
+#  Noise / housekeeping gene removal
+#  These genes dominate one-vs-rest tests for purely technical / ubiquity
+#  reasons and should be stripped before marker extraction.
+#
+#  prefixes: any gene whose name starts with one of these strings is removed.
+#  exact:    individual gene names to remove regardless of prefix.
+#
+#  Add to these lists if your data shows additional technical gene groups
+#  contaminating your marker lists.
+# ---------------------------------------------------------------------------
+noise_genes:
+  prefixes:
+    - "MT-"       # mitochondrial genes — expression reflects cell stress / quality, not identity
+    - "RPS"       # small ribosomal subunit proteins — universally expressed
+    - "RPL"       # large ribosomal subunit proteins — same reason
+    - "HLA-"      # MHC class I/II — highly variable due to genetic background, not cell type
+    - "EEF"       # elongation factors — ubiquitous translation machinery
+    - "EIF"       # initiation factors — same
+    - "H3-"       # histone H3 variants — replication/chromatin, not identity markers
+    - "TMSB"      # thymosin beta — actin-sequestering; broadly expressed
+    - "ACTG"      # cytoskeletal actin — housekeeping
+    - "FAU"       # ribosomal fusion protein — nearly universal
+    - "ATP5"      # ATP synthase subunits — mitochondrial/metabolic housekeeping
+    - "COX"       # cytochrome c oxidase subunits — ubiquitous electron transport
+    - "NDUF"      # NADH dehydrogenase subunits — complex I components
+    - "UQCR"      # ubiquinol-cytochrome c reductase subunits — complex III
+    - "HSP"       # heat-shock proteins — stress response, not identity
+    - "UB"        # ubiquitin family — universal protein homeostasis
+
+  exact:
+    - "MALAT1"    # nuclear lncRNA — highly expressed in virtually every cell type
+    - "NEAT1"     # paraspeckle lncRNA — ubiquitous
+    - "GAPDH"     # glycolytic enzyme — the classic housekeeping gene
+    - "ACTB"      # beta-actin — universal cytoskeletal component
+    - "FTH1"      # ferritin heavy chain — iron storage, broadly expressed
+    - "FTL"       # ferritin light chain — same
+    - "RACK1"     # ribosome receptor — translation scaffold
+    - "NACA"      # nascent polypeptide-associated complex — co-translational
+    - "PTMA"      # prothymosin alpha — nuclear chaperone, ubiquitous
+    - "BTF3"      # basic transcription factor — general transcription
+    - "MYL12A"    # myosin light chain — contractile, broadly expressed
+    - "MYL12B"    # myosin light chain variant — same
+    - "MYL6"      # smooth-muscle myosin — expressed in many non-muscle cells too
+    - "TPT1"      # tumor protein, translationally controlled — very broad
+    - "S100A6"    # calcium-binding protein — inflammatory marker, not specific
+    - "ID1"       # inhibitor of DNA binding — broadly activated
+    - "ID2"       # same family
+    - "ID3"       # same family
+    - "CD63"      # tetraspanin — late endosome marker, very broadly expressed
+    - "CD9"       # tetraspanin — membrane organizer, broadly expressed
+
+
+# ---------------------------------------------------------------------------
+#  Minimum cells per cell type
+#  apply:     set to true to enable; false to skip (useful if you need to
+#             preserve the full label space for a downstream taxonomy)
+#  min_cells: cell types with fewer cells than this are dropped.
+#             20 is a conservative floor; bump to 50 if you want tighter
+#             statistical guarantees for Wilcoxon marker tests.
+# ---------------------------------------------------------------------------
+cell_type_filter:
+  apply: true
+  min_cells: 20
+
+
+# ---------------------------------------------------------------------------
+#  Cell types to remove before preprocessing
+#  These lists use lowercase, stripped matching so minor spacing / case
+#  differences in the raw data don't cause missed removals.
+#
+#  adult: immune cells that contaminate the kidney reference.
+#         They skew the HVG selection and produce misleading immune markers
+#         when the goal is to characterize kidney-specific populations.
+#
+#  fetal: "leukocyte" is a broad immune catch-all that similarly contaminates
+#         the fetal dataset.
+# ---------------------------------------------------------------------------
+cell_type_removal:
+  adult:
+    - "t cell"
+    - "lymphocyte"
+    - "natural killer cell"
+    - "myeloid cell"
+    - "dendritic cell, human"
+    - "b cell"
+    - "non-classical monocyte"
+    - "classical monocyte"
+    - "conventional dendritic cell"
+
+  fetal:
+    - "leukocyte"
+
+
+# ---------------------------------------------------------------------------
+#  Rescue: re-label fetal cells carrying generic / catch-all labels
+#
+#  generic_labels:   cell_type values that indicate a cell couldn't be
+#                    annotated reliably in the original study.
+#
+#  score_threshold:  minimum mean marker expression required to accept a
+#                    rescue assignment.  Cells below this stay unassigned
+#                    and are dropped.  0.1 works well for log-normalized data;
+#                    lower it (e.g. 0.05) if you lose too many cells, raise it
+#                    (e.g. 0.2) if you want higher-confidence rescues only.
+#
+#  markers:          per-target gene lists.  Use canonical marker genes from
+#                    the literature.  Genes absent from the data are skipped
+#                    gracefully with a warning.
+# ---------------------------------------------------------------------------
+rescue:
+  generic_labels:
+    - "kidney cell"
+    - "kidney epithelial cell"
+
+  score_threshold: 0.1
+
+  markers:
+    Loop_of_Henle:
+      - "SLC12A1"   # NKCC2 — the defining transporter of the thick ascending limb
+      - "UMOD"      # uromodulin (Tamm-Horsfall protein) — TAL/early DCT marker
+      - "CLDN16"    # claudin-16 — paracellular Mg2+/Ca2+ reabsorption in TAL
+
+    Distal_Convoluted_Tubule:
+      - "SLC12A3"   # NCC (sodium-chloride cotransporter) — canonical DCT marker
+      - "CALB1"     # calbindin-D28k — early DCT, calcium transport
+      - "TRPM6"     # Mg2+ channel — DCT-enriched
+
+    Parietal_Epithelial_Cells:
+      - "CLDN1"     # claudin-1 — Bowman's capsule tight junctions
+      - "GPM6A"     # glycoprotein M6A — parietal cell surface marker
+      - "CAV1"      # caveolin-1 — PEC cytoskeleton / signaling
+
+
+# ---------------------------------------------------------------------------
+#  Harmonization map
+#  Keys are the original cell_type labels; values are what they should become.
+#  Labels NOT in this map pass through unchanged.
+#
+#  Rationale:
+#  - Adult endothelial subtypes are consolidated into a single "endothelial cell"
+#    label to match fetal terminology where this granularity isn't available.
+#  - Fibroblast/interstitial labels use "kidney interstitial cell" as the
+#    shared vocabulary across stages.
+#  - Add more entries here if you have additional stage-specific synonyms
+#    that should be unified before integration or joint marker extraction.
+# ---------------------------------------------------------------------------
+harmonization_map:
+  # --- Endothelial consolidation (5 adult subtypes → 1 shared label) ---
+  "peritubular capillary endothelial cell": "endothelial cell"
+  "vasa recta cell": "endothelial cell"
+  "glomerular capillary endothelial cell": "endothelial cell"
+  "kidney arterial blood vessel cell": "endothelial cell"
+  "endothelial cell of lymphatic vessel": "endothelial cell"
+
+  # --- Fibroblast / interstitial harmonization ---
+  "renal medullary fibroblast": "kidney interstitial cell"
+  "kidney interstitial fibroblast": "kidney interstitial cell"
