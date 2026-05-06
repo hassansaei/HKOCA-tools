@@ -1,0 +1,75 @@
+# ==============================================================================
+# 🧫 Organoid Pipeline Configuration
+# ==============================================================================
+
+paths:
+  input_dir: "/data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results/qc_filtered_rds"    # Folder containing the 27 .rds files
+  output_dir: "/data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/annotation/simple/organoids/results"      # Folder where results will be saved
+
+
+preprocessing:
+  n_hvg: 3000        # Number of highly variable genes for PCA
+  n_pcs: 30          # Number of PCA components to compute
+  n_neighbors: 15    # Number of neighbors for the kNN graph
+
+clustering:
+  res_min: 0.1       # Minimum resolution to test for silhouette sweep
+  res_max: 1.2       # Maximum resolution to test
+  res_step: 0.1      # Step size for resolution sweep
+  merge_overlap: 0.60    # Merge clusters sharing >= 60% of top markers
+  merge_top_n: 10        # Top N marker genes used for overlap check
+  min_cluster_frac: 0.005 # Clusters < 0.5% of dataset cells merge into nearest neighbor
+  max_merge_iters: 10     # Maximum iterations for duplicate-cluster merging loop
+  top_n_res_candidates: 3 # How many top silhouette resolutions to evaluate for coherence
+  downsample_threshold: 20000  # Cell count above which marker extraction is downsampled
+  downsample_per_cluster: 1000 # Cells per cluster to keep when downsampling
+
+marker_filtering:
+  min_pct_in: 0.40   # Baseline: gene must be in >= 40% of cluster
+  min_logfc: 1.0     # Baseline: log fold-change >= 1.0
+  min_kept: 20       # Ensure at least this many genes are kept per cell type
+  tolerance: 0.1     # Tolerance added to pct_out in stringent score formula
+  max_n_shown: 50    # Maximum genes considered for elbow detection
+  max_markers_per_cluster: 500  # Candidate markers retained per cluster before elbow cut
+  top_yaml_genes: 20            # Number of top genes written to the YAML marker list
+  dotplot_top_n: 5              # Genes per cluster shown in the summary dotplot
+
+noise_genes:
+  prefixes:
+    - "MT-"
+    - "RPS"
+    - "RPL"
+    - "HLA-"
+    - "EEF"
+    - "EIF"
+    - "H3-"
+    - "TMSB"
+    - "ACTG"
+    - "FAU"
+    - "ATP5"
+    - "COX"
+    - "NDUF"
+    - "UQCR"
+    - "HSP"
+    - "UB"
+  exact_matches:
+    - "MALAT1"
+    - "NEAT1"
+    - "GAPDH"
+    - "ACTB"
+    - "FTH1"
+    - "FTL"
+    - "RACK1"
+    - "NACA"
+    - "PTMA"
+    - "BTF3"
+    - "MYL12A"
+    - "MYL12B"
+    - "MYL6"
+    - "TPT1"
+    - "S100A6"
+    - "ID1"
+    - "ID2"
+    - "ID3"
+    - "CD63"
+    - "CD9"

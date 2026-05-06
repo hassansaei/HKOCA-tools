@@ -1,0 +1,15 @@
+name: organoid_pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base>=4.3.0
+  - r-seurat>=4.3.0
+  - r-presto
+  - r-dplyr
+  - r-ggplot2
+  - r-patchwork
+  - r-yaml
+  - r-stringr
+  - r-future
