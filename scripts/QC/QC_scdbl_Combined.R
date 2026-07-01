@@ -2526,12 +2526,34 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     log_info("H5AD Conversion Complete.")
 }
 
-# ── H5AD execution dispatcher ─────────────────────────────────────────────────
+# ── Stage execution dispatcher ─────────────────────────────────────────────────
+reverse_mode_run <- .as_bool(cfg$reverse_mode %||% "TRUE", TRUE)
 
-# Optional Stage: H5AD conversion
+if (RUN_STAGE == "all") {
+    if (reverse_mode_run) {
+        .run_stage_doublet(doublet_input_dir = rds_dir)
+        .run_stage_qc(qc_input_dir = DOUBLET_DIR)
+    } else {
+        .run_stage_qc(qc_input_dir = rds_dir)
+        .run_stage_doublet(doublet_input_dir = FILTERED_DIR)
+    }
+} else if (RUN_STAGE == "qc") {
+    .run_stage_qc(qc_input_dir = if (reverse_mode_run) DOUBLET_DIR else rds_dir)
+} else if (RUN_STAGE == "doublet") {
+    .run_stage_doublet(doublet_input_dir = if (reverse_mode_run) rds_dir else FILTERED_DIR)
+}
+
+# ── Optional Stage: H5AD conversion ───────────────────────────────────────────
 if (RUN_H5AD) {
-    # Dynamically grab the output of whatever stage just successfully completed
-    h5ad_input_dir <- if (RUN_STAGE %in% c("all", "qc")) FILTERED_DIR else DOUBLET_DIR
+    h5ad_input_dir <- if (RUN_STAGE == "qc") {
+        FILTERED_DIR
+    } else if (RUN_STAGE == "doublet") {
+        DOUBLET_DIR
+    } else if (reverse_mode_run) {
+        FILTERED_DIR
+    } else {
+        DOUBLET_DIR
+    }
     .run_stage_h5ad(h5ad_input_dir, H5AD_DIR)
 }
 
