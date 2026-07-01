@@ -35,7 +35,7 @@ load_packages_safely <- function() {
     }
 
     if (length(missing) > 0) {
-        stop(sprintf("Missing required packages: %s\nPlease construct the environment using 'conda env create -f environment.yml' and activate it.", paste(missing, collapse = ", ")))
+        stop(sprintf("Missing required packages: %s\nPlease construct the environment using 'conda env create -f scripts/QC/environment_qc.yaml' and activate it.", paste(missing, collapse = ", ")))
     }
 
     suppressPackageStartupMessages({
