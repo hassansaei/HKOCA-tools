@@ -1293,8 +1293,12 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                     }
                 }
             }
-            if (is.null(cm))
-                cm <- GetAssayData(obj_raw, assay = "RNA", layer = "counts")
+            if (is.null(cm)) {
+                cm <- tryCatch(
+                    GetAssayData(obj_raw, assay = "RNA", layer = "counts"),
+                    error = function(e) GetAssayData(obj_raw, assay = "RNA", slot = "counts")
+                )
+            }
 
             meta_in  <- as.data.frame(obj_raw@meta.data)
             obj      <- CreateSeuratObject(counts = cm, meta.data = meta_in)
