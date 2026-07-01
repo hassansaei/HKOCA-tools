@@ -3076,8 +3076,8 @@ if (RUN_DOUBLET) log_info(sprintf("  Doublet PDF       : %s", file.path(DOUBLET_
 if (RUN_DOUBLET) log_info(sprintf("  Doublet CSV       : %s", file.path(DOUBLET_SUMMARY_DIR, paste0("doublet_summary_",      run_ts, ".csv"))))
 if (RUN_H5AD)    log_info(sprintf("  H5AD outputs      : %s", H5AD_DIR))
 log_info(sprintf("  Integrated CSV    : %s", file.path(INTEGRATED_SUMMARY_DIR, "integrated_qc_doublet_summary.csv")))
-log_info(sprintf("  Integrated PNG    : %s", file.path(INTEGRATED_SUMMARY_DIR, "integrated_summary_dashboard.png")))
-log_info(sprintf("  Integrated PDF    : %s", file.path(INTEGRATED_SUMMARY_DIR, "integrated_summary_dashboard.pdf")))
+log_info(sprintf("  Integrated PNG dir: %s", file.path(INTEGRATED_SUMMARY_DIR, "plots")))
+log_info(sprintf("  Integrated PDF    : %s", file.path(INTEGRATED_SUMMARY_DIR, "integrated_summary_plots.pdf")))
 log_info(sprintf("  Log file          : %s", log_file_path))
 log_info("══════════════════════════════════════════════════")
 
