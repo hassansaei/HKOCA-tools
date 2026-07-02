@@ -203,10 +203,10 @@ Crucially, this parameter acts as a "biological forgiveness" dial and should be 
 
 Genes are sorted by `stringent_score` in descending order and capped to
 the top `deliverables.max_n` candidates. Rank and score are each
-normalized to `[0, 1]`, and the gene at maximum geometric distance from
-the origin of the rank-vs-score curve is taken as the natural inflection
-point ("elbow") : the point beyond which additional genes add
-diminishing discriminative value.
+normalized to `[0, 1]`, and the gene at maximum distance from the
+diagonal line (`x_norm + y_norm = 1`) of the rank-vs-score curve is taken
+as the natural inflection point ("elbow") : the point beyond which
+additional genes add diminishing discriminative value.
 
 ### Step 4 : Final cutoff
 
