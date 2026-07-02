@@ -263,8 +263,8 @@ def qc_filter_low_abundance(adata, atlas_name, min_cells):
         logging.warning(f"[{atlas_name}] QC ALERT: Dropping cell types with < {min_cells} cells: {dropped.to_dict()}")
         
     adata_filtered = adata[adata.obs["cell_type"].isin(valid_types)].copy()
+    adata_filtered.obs["cell_type"] = adata_filtered.obs["cell_type"].astype("category")
     adata_filtered.obs["cell_type"] = adata_filtered.obs["cell_type"].cat.remove_unused_categories()
-    
     return adata_filtered
 
 
