@@ -49,7 +49,7 @@ pan_endothelial:
     - "adult_endothelial_cell_of_lymphatic_vessel.tsv"
   top_n: 20
   merged_group_name: "adult_endothelial_cell"
-  merged_file_name: "adult_endothelial_cell.tsv"
+  merged_file_name: "adult_pan_endothelial_cell.tsv"
 
 # CONSOLIDATED: Moved redundant elbow parameters here for deliverable generation
 deliverables:
