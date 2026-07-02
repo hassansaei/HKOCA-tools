@@ -126,8 +126,8 @@ def check_threshold_elbow(marker_df, cell_type, tolerance, params):
         if len(y) > 2:
             x_norm = x / x.max()
             y_norm = (y - y.min()) / (y.max() - y.min() + 1e-9)
-            distances = 1.0 - (x_norm + y_norm)
-            elbow_idx = np.argmax(distances) 
+            distances = np.abs(1.0 - (x_norm + y_norm))
+            elbow_idx = np.argmax(distances)
         else:
             elbow_idx = len(y) - 1 
 
