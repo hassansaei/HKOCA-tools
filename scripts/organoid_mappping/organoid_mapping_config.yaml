@@ -1,0 +1,192 @@
+# =============================================================================
+# Organoid Marker Extraction Pipeline — Configuration
+# =============================================================================
+# Edit this file, not the pipeline code. All paths and tunables live here.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# I/O
+# ---------------------------------------------------------------------------
+io:
+  # Folder containing the .h5ad files (subfolders are ignored, same as the
+  # original RDS pipeline).
+  input_dir: "/data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results_after_harmonization_final/qc_filtered_h5ad_converted"
+
+  # Everything the pipeline writes goes under here.
+  output_dir: "/data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/annotation/simple/organoids/results_test_2"
+
+  # Sub-folder names under output_dir
+  markers_per_dataset_dir: "markers_by_dataset"
+  checkpoint_dir: "checkpoints"          # cached preprocessed/clustered h5ad
+  figures_dir: "figures"
+
+# ---------------------------------------------------------------------------
+# Preprocessing (Normalise -> HVG -> Scale -> PCA -> Neighbors)
+# ---------------------------------------------------------------------------
+preprocessing:
+  normalize_target_sum: 10000     # scanpy sc.pp.normalize_total target_sum
+  n_hvg: 3000                     # highly variable genes for PCA
+  n_pcs: 30                       # PCA components
+  n_neighbors: 15                 # kNN graph
+  scale_max_value: 10             # clip value for sc.pp.scale (Seurat default clip)
+  random_state: 42
+ 
+# ---------------------------------------------------------------------------
+# Clustering — FIXED resolution per dataset (no silhouette / dynamic sweep)
+# ---------------------------------------------------------------------------
+clustering:
+  algorithm: "leiden"             # "leiden" (recommended) or "louvain"
+  cluster_key: "leiden"           # obs column name written by clustering step
+  flavor: "igraph"                # scanpy leiden flavor
+  n_iterations: 2
+ 
+  # dataset_name -> resolution. dataset_name is the h5ad filename without the
+  # .h5ad extension, matched EXACTLY against what's on disk. If a discovered
+  # file has no entry here the pipeline will WARN and skip clustering for it
+  # rather than silently guessing a resolution.
+  resolutions:
+    d10_1016_j_cell_2020_04_004_harmonized_singlets_filtered: 0.6
+    d10_1016_j_celrep_2020_108514_harmonized_singlets_filtered: 0.4
+    d10_1016_j_cmet_2022_04_009_harmonized_singlets_filtered: 0.3
+    d10_1016_j_devcel_2019_06_001_harmonized_singlets_filtered: 0.3
+    d10_1016_j_stem_2018_04_022_harmonized_singlets_filtered: 0.6
+    d10_1016_j_stem_2018_10_010_harmonized_singlets_filtered: 0.3
+    d10_1016_j_stem_2019_06_009_harmonized_singlets_filtered: 0.5
+    d10_1016_j_stem_2021_11_001_harmonized_singlets_filtered: 0.4
+    d10_1016_j_stem_2021_12_010_harmonized_singlets_filtered: 0.3
+    d10_1016_j_stem_2022_06_005_harmonized_singlets_filtered: 0.1
+    d10_1038_s41467_019_13382_0_harmonized_singlets_filtered: 0.3
+    d10_1038_s41467_022_33623_z_harmonized_singlets_filtered: 0.9
+    d10_1038_s41551_025_01542_1_harmonized_singlets_filtered: 0.4
+    d10_1038_s41563_020_00853_9_harmonized_singlets_filtered: 0.8
+    d10_1038_s41592_018_0253_2_harmonized_singlets_filtered: 0.5
+    d10_1038_s42003_024_07069_6_harmonized_singlets_filtered: 0.4
+    d10_1101_505396_harmonized_singlets_filtered: 0.6
+    d10_1126_sciadv_abj5633_GSE165104_harmonized_singlets_filtered: 0.5
+    d10_1172_jci_insight_122697_harmonized_singlets_filtered: 0.5
+    d10_1242_dev_200198_harmonized_singlets_filtered: 0.4
+    dno_doi_kidney_organoid_GSE312980_harmonized_singlets_filtered: 1.0
+    dno_doi_kidney_organoid_LMRH_harmonized_singlets_filtered: 0.6
+
+  # ---------------------------------------------------------------------------
+  # Dynamic resolution search — OFF by default.
+  #
+  # If you don't yet know a good resolution for a dataset, turn this on and
+  # the pipeline will search for one instead of reading `resolutions` above:
+  #   1. Sweep resolutions from resolution_min to resolution_max.
+  #   2. Score each with silhouette width, shortlist the top few.
+  #   3. Among the shortlist, pick the resolution with the fewest
+  #      "duplicate" clusters (near-identical top marker genes).
+  #   4. Merge duplicate clusters, then absorb micro-clusters into their
+  #      nearest neighbour.
+  #
+  # NB: this is a lot slower than fixed-resolution clustering — it clusters
+  # every candidate resolution and runs extra marker passes on top. Only
+  # turn it on when `resolutions` above isn't a good option yet.
+  # ---------------------------------------------------------------------------
+  dynamic_resolution:
+    enabled: false              # set true to enable; applies to ALL datasets
+
+    resolution_min: 0.1
+    resolution_max: 1.2
+    resolution_step: 0.1
+    silhouette_max_cells: 5000   # subsample size for the silhouette score
+
+    top_k_by_silhouette: 3       # how many candidate resolutions to shortlist
+
+    # Marker-coherence check used to spot duplicate / micro clusters
+    merge_top_n: 15               # top marker genes per cluster compared
+    merge_overlap: 0.6            # >= this fraction of shared top genes = duplicate
+    merge_min_logfc: 0.25         # quick-marker logFC threshold (looser than Phase 1)
+    merge_min_pct: 0.1            # quick-marker min detection pct (looser than Phase 1)
+    merge_max_iterations: 10      # cap on iterative duplicate-merging passes
+    min_cluster_frac: 0.005       # clusters smaller than this fraction get absorbed
+
+# ---------------------------------------------------------------------------
+# Noise / housekeeping genes excluded before Wilcoxon marker testing
+# ---------------------------------------------------------------------------
+noise_genes:
+  prefixes:
+    - "MT-"
+    - "RPS"
+    - "RPL"
+    - "HLA-"
+    - "EEF"
+    - "EIF"
+    - "H3-"
+    - "TMSB"
+    - "ACTG"
+    - "FAU"
+    - "ATP5"
+    - "COX"
+    - "NDUF"
+    - "UQCR"
+    - "HSP"
+    - "UB"
+  exact:
+    - "MALAT1"
+    - "NEAT1"
+    - "GAPDH"
+    - "ACTB"
+    - "FTH1"
+    - "FTL"
+    - "RACK1"
+    - "NACA"
+    - "PTMA"
+    - "BTF3"
+    - "MYL12A"
+    - "MYL12B"
+    - "MYL6"
+    - "TPT1"
+    - "S100A6"
+    - "ID1"
+    - "ID2"
+    - "ID3"
+    - "CD63"
+    - "CD9"
+  exclude_ensembl_prefixed: true    # drop genes starting with "ENSG"
+ 
+# ---------------------------------------------------------------------------
+# Wilcoxon marker extraction
+# ---------------------------------------------------------------------------
+marker_extraction:
+  method: "wilcoxon"
+  only_positive: true              # keep only logFC > 0 markers, like only.pos=TRUE
+  corr_method: "benjamini-hochberg"
+  counts_layer: "counts"           # layer holding raw counts, used for pct_in/pct_out
+ 
+# ---------------------------------------------------------------------------
+# Baseline filters + stringent score + elbow detection
+# ---------------------------------------------------------------------------
+marker_filtering:
+  min_pct_in: 0.40      # baseline: gene detected in >= 40% of cluster cells
+  min_logfc: 1.0         # baseline: logFC >= 1.0
+  min_kept: 20            # always keep at least this many genes per cell type
+  tolerance: 0.1           # stringent_score = logFC * pct_in^2 / (pct_out + tolerance)
+  max_n_shown: 50           # candidate pool size before elbow detection is applied
+ 
+# ---------------------------------------------------------------------------
+# Phase 2 — organoid <-> adult/fetal reference mapping (Pearson correlation)
+# ---------------------------------------------------------------------------
+phase2:
+  # Single-file reference marker tables (one row per cell_type/gene/score),
+  # e.g. adult_kidney_markers_top20.tsv.
+  adult_markers_path: "/data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/annotation/simple/adult_fetal/results/requirement_outputs/adult_kidney_markers_top20.tsv"
+  fetal_markers_path: "/data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/annotation/simple/adult_fetal/results/requirement_outputs/fetal_kidney_markers_top20.tsv"
+ 
+  # Column names in the reference TSVs above.
+  reference_columns:
+    cell_type: "canonical_cell_type"
+    gene: "gene"
+    score: "score"
+ 
+  # Sub-folder (under io.output_dir) where mapping_table.tsv is written.
+  mapping_dir: "mapping"
+ 
+  # How many top organoid marker genes (by stringent_score) to use per
+  # cluster when correlating against references.
+  top_n_genes: 50
+ 
+  # Minimum number of shared genes required between an organoid cluster and
+  # a reference cell type before a Pearson correlation is trusted as a match.
+  min_overlap_genes: 4
