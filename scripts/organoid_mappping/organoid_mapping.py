@@ -14,7 +14,7 @@ sweep (opt-in, slower — see clustering.dynamic_resolution in the config).
 
 Everything tunable lives in config.yaml — run with:
 
-    python pipeline.py --config config.yaml
+    python organoid_mapping.py --config organoid_mapping_config.yaml
 """
 
 from __future__ import annotations
