@@ -1,0 +1,94 @@
+paths:
+  base_dir: !! "/path to the base directory/" !!
+  adult_h5ad: "ref_data/preprocessed_data/adult_preprocessed.h5ad"
+  fetal_h5ad: "ref_data/preprocessed_data/fetal_preprocessed.h5ad"
+  out_ref: "results/reference"
+  out_adult: "results/adult_markers"
+  out_fetal: "results/fetal_markers"
+  out_req: "results/requirement_outputs"
+
+columns:
+  adult_celltype_col: "cell_type"
+  fetal_celltype_col: "cell_type"
+
+scanpy_settings:
+  verbosity: 1
+  dpi: 100
+  facecolor: "white"
+  frameon: false
+
+# NEW: Extracted QC Parameters
+qc:
+  min_cells: 20
+  min_corr: 0.2
+  expected_lineages:
+    - "podocyte"
+    - "epithelial_cell_of_proximal_tubule"
+    - "endothelial_cell"
+    - "kidney_loop_of_Henle"
+
+wilcoxon:
+  n_genes: 10000
+
+# NEW: Extracted Diagnostic Parameters
+run_diagnostics: true
+diagnostics:
+  adult_test_cell_type: "epithelial_cell_of_proximal_tubule"
+  fetal_test_cell_type: "podocyte"
+
+elbow_params:
+  adult_tolerance: 0.05
+  fetal_tolerance: 0.20
+
+# UPDATED: Extracted Pan-Endothelial Merge Parameters
+pan_endothelial:
+  files_to_merge:
+    - "adult_peritubular_capillary_endothelial_cell.tsv"
+    - "adult_kidney_arterial_blood_vessel_cell.tsv"
+    - "adult_glomerular_capillary_endothelial_cell.tsv"
+    - "adult_endothelial_cell_of_lymphatic_vessel.tsv"
+  top_n: 20
+  merged_group_name: "adult_endothelial_cell"
+  merged_file_name: "adult_pan_endothelial_cell.tsv"
+
+# CONSOLIDATED: Moved redundant elbow parameters here for deliverable generation
+deliverables:
+  min_pct_in: 0.40
+  min_logfc: 1.0
+  max_pval_adj: 0.05
+  export_n: 20
+  exclude_gene_prefix: "MT-"
+  overlap_n: 100
+  max_n: 10000
+  min_kept: 20
+
+plotting:
+  save_figs: true
+
+mappings:
+  endothelial_consolidation:
+    endothelial_cell_of_lymphatic_vessel: "endothelial_cell"
+    glomerular_capillary_endothelial_cell: "endothelial_cell"
+    kidney_arterial_blood_vessel_cell: "endothelial_cell"
+    peritubular_capillary_endothelial_cell: "endothelial_cell"
+    
+  adult_canonical_raw:
+    kidney_loop_of_Henle_thick_ascending_limb_epithelial_cell: "kidney_loop_of_Henle"
+    kidney_loop_of_Henle_thin_ascending_limb_epithelial_cell: "kidney_loop_of_Henle"
+    kidney_loop_of_Henle_thin_descending_limb_epithelial_cell: "kidney_loop_of_Henle"
+    endothelial_cell_of_lymphatic_vessel: "endothelial_cell"
+    glomerular_capillary_endothelial_cell: "endothelial_cell"
+    kidney_arterial_blood_vessel_cell: "endothelial_cell"
+    peritubular_capillary_endothelial_cell: "endothelial_cell"
+    
+  fetal_canonical_raw:
+    Distal_Convoluted_Tubule: "kidney_distal_convoluted_tubule_epithelial_cell"
+    Loop_of_Henle: "kidney_loop_of_Henle"
+    Parietal_Epithelial_Cells: "parietal_epithelial_cell"
+    glomerular_mesangial_cell: "mural_cell"
+    kidney_interstitial_cell: "kidney_interstitial_fibroblast"
+    endothelial_cell: "endothelial_cell"
+    epithelial_cell_of_proximal_tubule: "epithelial_cell_of_proximal_tubule"
+    kidney_connecting_tubule_epithelial_cell: "kidney_connecting_tubule_epithelial_cell"
+    mesonephric_nephron_tubule_epithelial_cell: "mesonephric_nephron_tubule_epithelial_cell"
+    podocyte: "podocyte"
