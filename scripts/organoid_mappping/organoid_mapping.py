@@ -112,8 +112,7 @@ def load_adata(path: Path, counts_layer: str = "counts") -> sc.AnnData:
     if counts_layer not in adata.layers:
         adata.layers[counts_layer] = adata.X.copy()
 
-    # Keep a raw snapshot too, in case something downstream needs it.
-    adata.raw = adata
+    # Raw counts are preserved in `adata.layers[counts_layer]`; avoid duplicating them in `adata.raw`.
 
     adata.obs["dataset_name"] = dataset_name_from_path(path)
     return adata
