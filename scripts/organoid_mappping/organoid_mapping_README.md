@@ -4,11 +4,7 @@ A scanpy/h5ad pipeline that clusters organoid single-cell datasets, extracts
 curated marker genes per cluster, and maps each cluster onto adult and fetal
 reference cell types via Pearson correlation.
 
-The statistical logic (Leiden/Louvain
-clustering, Wilcoxon marker tests, counts-based pct_in/pct_out, a stringent
-scoring formula, and elbow-based marker curation). Clustering resolution can
-be set per dataset (default) or found automatically via an opt-in silhouette
-+ marker-coherence search.
+The statistical logic includes Leiden/Louvain clustering, Wilcoxon marker tests, counts-based pct_in/pct_out, a stringent scoring formula, and elbow-based marker curation. Clustering resolution can be set per dataset (default) or found automatically via an opt-in silhouette + marker-coherence search.
 
 ---
 
