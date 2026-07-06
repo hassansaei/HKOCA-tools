@@ -472,8 +472,9 @@ def extract_wilcoxon_markers(
     if me_cfg.get("only_positive", True):
         de = de[de["logFC"] > 0]
 
+    pct_genes = sorted(de["gene"].dropna().unique().tolist())
     pct_df = compute_pct_in_out(
-        adata, cluster_key, clean_genes, me_cfg["counts_layer"]
+        adata, cluster_key, pct_genes, me_cfg["counts_layer"]
     )
 
     merged = de.merge(pct_df, on=["gene", "cluster"], how="left")
