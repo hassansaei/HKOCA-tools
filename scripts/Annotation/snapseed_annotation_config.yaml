@@ -1,0 +1,29 @@
+# Configuration for snapseed_annotation.ipynb
+
+# Paths are relative to the HKOCA-tools repository root unless given as absolute paths.
+# If auto-detection fails, set hkoca_tools_root to your local HKOCA-tools checkout.
+
+hkoca_tools_root: null
+
+paths:
+  qc_input_dir: scripts/qc/qc_results_after_harmonization_final/qc_filtered_h5ad_converted
+  marker_yaml: scripts/annotation/simple/annotation/snapseed_markers_v4.yaml
+  annotated_output_dir: scripts/annotation/simple/annotation/after_harmonization/annotated_objects_after_harmonization
+  clustered_output_dir: scripts/annotation/simple/annotation/after_harmonization/clustered_objects_after_harmonization
+  summary_figures_dir: scripts/annotation/simple/annotation/after_harmonization/summary_figures
+  adult_ref_h5ad: scripts/annotation/simple/adult_fetal/ref_data/Adult_194504.h5ad
+  fetal_ref_h5ad: scripts/annotation/simple/adult_fetal/ref_data/Fetal_17962.h5ad
+  adult_markers_dir: scripts/annotation/simple/adult_fetal/results/adult_markers
+  fetal_markers_dir: scripts/annotation/simple/adult_fetal/results/fetal_markers
+
+parameters:
+  seed: 42
+  scanpy_verbosity: 0
+  default_cluster_key: leiden_clusters
+  hvg_n_top_genes: 3000
+  pca_n_comps: 50
+  neighbors_n_neighbors: 20
+  neighbors_n_pcs: 30
+  scale_max_value: 10
+  normalize_target_sum: 10000
+  dpi: 300
