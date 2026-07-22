@@ -64,7 +64,8 @@ Each invocation of `workflow_scheduler` runs all three steps sequentially for a 
 ## Directory layout
 
 ```
-Benchmark/
+push/
+├── environment.yml                # Conda environment (benchmark + integration + reannotation)
 ├── benchmark_config.yaml          # Central configuration (paths, params)
 ├── workflow_scheduler             # Workflow entry point; orchestrates all three steps
 ├── python_integration_methods.py  # Step 1: Python integration methods
@@ -351,7 +352,19 @@ python Visualisation_results.py --config benchmark_config.yaml
 
 ## Requirements
 
-### Python environment (`paths.conda_env`, default: `atlas`)
+### Environment setup
+
+Create the shared conda environment from `environment.yml` (also covers scPoli integration and reannotation):
+
+```bash
+conda env create -f environment.yml
+conda activate hkoca_integration
+Rscript -e 'remotes::install_github("quadbiolab/simspec")'
+```
+
+Set `paths.conda_env` in `benchmark_config.yaml` to `hkoca_integration` (default remains `atlas` if that env already has the packages below).
+
+### Python environment (`paths.conda_env`)
 
 | Package | Used by |
 |---------|---------|
@@ -424,12 +437,4 @@ Not all iterations have completed. Run `Visualisation_results.py` only after eve
 
 Pass an absolute path: `--config /full/path/to/benchmark_config.yaml`
 
----
 
-## Citation
-
-If you use this pipeline in a publication, cite the scIB framework:
-
-> Luecken, M.D. et al. Benchmarking atlas-level data integration in single-cell genomics. *Nature Methods* (2022).
-
-Method-specific citations apply for individual integration tools (Harmony, scVI, Seurat, and others).
