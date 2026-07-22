@@ -1,11 +1,11 @@
 # HKOCA Integration Tools
 
-Documentation for the integration workflows in `scripts_benchmark/push/`. This directory contains two independent, config-driven pipelines:
+Documentation for the integration workflows in `Benchmark/`. This directory contains two independent, config-driven pipelines:
 
 1. **Integration benchmark** — compare twelve integration methods with scIB metrics across repeated subsamples.
 2. **scPoli full-atlas integration** — train scPoli on the complete organoid atlas and produce an integrated reference object with QC figures.
 
-Both pipelines read parameters from YAML config files and accept a `--config` flag. Original scripts outside `push/` are not modified.
+Both pipelines read parameters from YAML config files and accept a `--config` flag.
 
 ---
 
@@ -23,7 +23,7 @@ Both pipelines read parameters from YAML config files and accept a `--config` fl
 ## Directory layout
 
 ```
-push/
+Benchmark/
 ├── integration_README.md              # This file
 ├── README.md                          # Detailed benchmark documentation
 
