@@ -1,7 +1,8 @@
 # HKOCA Level 3 Reannotation
 
-Documentation for the high-resolution reannotation pipeline in `Benchmark/`. This step runs on the scPoli-integrated atlas to refine Level_3 labels via Leiden clustering at resolution 10.0, propagate Level_2 and Level_1 labels, and validate cell type structure with marker genes.
+Documentation for the high-resolution reannotation pipeline in `scripts_benchmark/push/`. This step runs on the scPoli-integrated atlas to refine Level_3 labels via Leiden clustering at resolution 10.0, propagate Level_2 and Level_1 labels, and validate cell type structure with marker genes.
 
+The push copy is config-driven and logic-identical to `parameters/reannotation/reannotate_res10.py`. The original file is not modified.
 
 ---
 
@@ -53,6 +54,7 @@ reannotate_res10.py --config reannotation_config.yaml
 
 ```
 push/
+├── environment.yml              # Shared conda environment (see Requirements)
 ├── reannotation_README.md       # This file
 ├── reannotation_config.yaml     # Central configuration
 └── reannotate_res10.py          # Reannotation script
@@ -96,6 +98,7 @@ Write the full atlas with new integrated annotation columns to disk.
 Differences from the original script:
 
 - Paths and parameters moved to YAML config
+- Emojis and decorative comments removed
 - `--config` flag support added
 
 All processing logic is unchanged.
@@ -201,6 +204,15 @@ python reannotate_res10.py
 ---
 
 ## Requirements
+
+### Environment setup
+
+Use the shared `environment.yml` (same env as the benchmark and scPoli integration):
+
+```bash
+conda env create -f environment.yml
+conda activate hkoca_integration
+```
 
 ### Python
 
