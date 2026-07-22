@@ -1,6 +1,6 @@
 # HKOCA Integration Tools
 
-Documentation for the integration workflows in `Benchmark/`. This directory contains two independent, config-driven pipelines:
+Documentation for the integration workflows in `Benchmark`. This directory contains two independent, config-driven pipelines:
 
 1. **Integration benchmark** — compare twelve integration methods with scIB metrics across repeated subsamples.
 2. **scPoli full-atlas integration** — train scPoli on the complete organoid atlas and produce an integrated reference object with QC figures.
@@ -23,11 +23,12 @@ Both pipelines read parameters from YAML config files and accept a `--config` fl
 ## Directory layout
 
 ```
-Benchmark/
+
+├── environment.yml                    # Conda environment (benchmark + integration + reannotation)
 ├── integration_README.md              # This file
-├── README.md                          # Detailed benchmark documentation
 
 # Benchmark pipeline
+├── README.md
 ├── benchmark_config.yaml
 ├── workflow_scheduler
 ├── python_integration_methods.py
@@ -87,7 +88,7 @@ Visualisation_results.py                  (aggregate tables and figures)
 ### Usage
 
 ```bash
-cd scripts_benchmark/push
+cd Benchmark
 
 # Run one iteration
 ./workflow_scheduler --config benchmark_config.yaml --iter 1
@@ -148,17 +149,10 @@ run_integration_scpoli_parameters.py --config scpoli_integration_config.yaml
 
 ### Script: `run_integration_scpoli_parameters.py`
 
-The push copy is logic-identical to `parameters/run_integration_scpoli_parameters.py`. The only differences are:
-
-- Hardcoded paths and parameters moved to `scpoli_integration_config.yaml`
-- `--config` flag support added
-
-All processing steps, model architecture, training parameters, and figure generation match the original script.
-
 ### Usage
 
 ```bash
-cd scripts_benchmark/push
+cd Benchmark
 
 python run_integration_scpoli_parameters.py --config scpoli_integration_config.yaml
 ```
@@ -232,6 +226,20 @@ paths:
 
 ## Requirements
 
+### Environment setup
+
+All dependencies for the benchmark, scPoli integration, and reannotation are listed in `environment.yml`:
+
+```bash
+conda env create -f environment.yml
+conda activate hkoca_integration
+
+# Required for CSS methods (not on CRAN/conda)
+Rscript -e 'remotes::install_github("quadbiolab/simspec")'
+```
+
+Point `paths.conda_env` in `benchmark_config.yaml` to `hkoca_integration` (or keep your existing env if it already has these packages).
+
 ### Python
 
 | Package | Benchmark | scPoli |
@@ -276,4 +284,4 @@ paths:
 
 **Out of memory during training**: Reduce `feature_selection.n_top_genes` or `training.batch_size` in `scpoli_integration_config.yaml`.
 
-**Missing cells after sanitization**: Cells with null values in `study`, `sample_id`, `Level_2`, or `Level_1` are ed. Check upstream annotation quality if cell loss is excessive.
+**Missing cells after sanitization**: Cells with null values in `study`, `sample_id`, `Level_2`, or `Level_1` are removed. Check upstream annotation quality if cell loss is excessive.
