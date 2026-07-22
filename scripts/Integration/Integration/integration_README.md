@@ -278,13 +278,3 @@ paths:
 **Out of memory during training**: Reduce `feature_selection.n_top_genes` or `training.batch_size` in `scpoli_integration_config.yaml`.
 
 **Missing cells after sanitization**: Cells with null values in `study`, `sample_id`, `Level_2`, or `Level_1` are removed. Check upstream annotation quality if cell loss is excessive.
-
----
-
-## Citation
-
-If you use these pipelines in a publication, cite the scIB framework:
-
-> Luecken, M.D. et al. Benchmarking atlas-level data integration in single-cell genomics. *Nature Methods* (2022).
-
-Method-specific citations apply for individual tools (Harmony, scVI, scPoli, Seurat, and others).
