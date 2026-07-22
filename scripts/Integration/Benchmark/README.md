@@ -64,7 +64,7 @@ Each invocation of `workflow_scheduler` runs all three steps sequentially for a 
 ## Directory layout
 
 ```
-push/
+Benchmark/
 ├── benchmark_config.yaml          # Central configuration (paths, params)
 ├── workflow_scheduler             # Workflow entry point; orchestrates all three steps
 ├── python_integration_methods.py  # Step 1: Python integration methods
