@@ -151,7 +151,6 @@ run_integration_scpoli_parameters.py --config scpoli_integration_config.yaml
 The push copy is logic-identical to `parameters/run_integration_scpoli_parameters.py`. The only differences are:
 
 - Hardcoded paths and parameters moved to `scpoli_integration_config.yaml`
-- Emojis and unnecessary comments removed
 - `--config` flag support added
 
 All processing steps, model architecture, training parameters, and figure generation match the original script.
@@ -277,4 +276,4 @@ paths:
 
 **Out of memory during training**: Reduce `feature_selection.n_top_genes` or `training.batch_size` in `scpoli_integration_config.yaml`.
 
-**Missing cells after sanitization**: Cells with null values in `study`, `sample_id`, `Level_2`, or `Level_1` are removed. Check upstream annotation quality if cell loss is excessive.
+**Missing cells after sanitization**: Cells with null values in `study`, `sample_id`, `Level_2`, or `Level_1` are ed. Check upstream annotation quality if cell loss is excessive.
