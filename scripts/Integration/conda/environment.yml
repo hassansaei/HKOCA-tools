@@ -1,0 +1,67 @@
+# HKOCA integration environment
+# Covers: method benchmark, scPoli full-atlas integration, Level-3 reannotation
+#
+# Create:
+#   conda env create -f environment.yml
+# Activate:
+#   conda activate hkoca_integration
+#
+# After create, install simspec (CSS methods; not on CRAN/conda):
+#   Rscript -e 'if (!requireNamespace("remotes", quietly=TRUE)) install.packages("remotes"); remotes::install_github("quadbiolab/simspec")'
+#
+# GPU note: PyTorch is installed via pip with CUDA. Adjust the torch index
+
+name: hkoca_integration
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - r-base>=4.3
+
+  # Core scientific stack
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - seaborn
+  - pyyaml
+  - psutil
+  - h5py
+  - pytables
+  - joblib
+  - tqdm
+  - scikit-learn
+  - numba
+
+  # Single-cell (Python)
+  - scanpy>=1.10
+  - anndata>=0.10
+  - umap-learn
+  - leidenalg
+  - python-igraph
+  - harmonypy
+  - scanorama
+  - bbknn
+
+  # R packages (benchmark CCA/RPCA + config)
+  - r-seurat>=5.0
+  - r-seuratobject
+  - r-matrix
+  - r-yaml
+  - r-igraph
+  - r-leiden
+  - r-devtools
+  - r-remotes
+
+  - pip:
+      # Deep learning integration (scVI / scANVI / scPoli)
+      - torch
+      - scvi-tools>=1.4
+      - scarches>=0.6
+      # Benchmark metrics
+      - scib>=1.1
+      - scib-metrics
