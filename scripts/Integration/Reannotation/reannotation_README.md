@@ -1,8 +1,7 @@
 # HKOCA Level 3 Reannotation
 
-Documentation for the high-resolution reannotation pipeline in `scripts_benchmark/push/`. This step runs on the scPoli-integrated atlas to refine Level_3 labels via Leiden clustering at resolution 10.0, propagate Level_2 and Level_1 labels, and validate cell type structure with marker genes.
+Documentation for the high-resolution reannotation pipeline in `Benchmark/`. This step runs on the scPoli-integrated atlas to refine Level_3 labels via Leiden clustering at resolution 10.0, propagate Level_2 and Level_1 labels, and validate cell type structure with marker genes.
 
-The push copy is config-driven and logic-identical to `parameters/reannotation/reannotate_res10.py`. The original file is not modified.
 
 ---
 
