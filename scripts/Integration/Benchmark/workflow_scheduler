@@ -1,0 +1,132 @@
+#!/bin/bash
+# ==============================================================================
+# HKOCA Integration Benchmark Workflow Scheduler
+#
+# Orchestrates the three-step integration benchmark pipeline for one iteration.
+#
+# Usage:
+#   ./workflow_scheduler --config /path/to/benchmark_config.yaml [--iter N]
+# ==============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${SCRIPT_DIR}/benchmark_config.yaml"
+ITER_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --config)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --iter)
+            ITER_ID="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: $0 --config /path/to/benchmark_config.yaml [--iter N]"
+            exit 1
+            ;;
+    esac
+done
+
+export BENCHMARK_CONFIG="${CONFIG_FILE}"
+
+eval "$(python - "${CONFIG_FILE}" "${ITER_ID}" <<'PY'
+import shlex
+import sys
+from pathlib import Path
+
+import yaml
+
+config_file = Path(sys.argv[1]).resolve()
+cli_iter = sys.argv[2]
+with open(config_file, encoding="utf-8") as handle:
+    cfg = yaml.safe_load(handle)
+
+paths = cfg["paths"]
+iteration = cfg["iteration"]
+iter_id = cli_iter if cli_iter else str(iteration["default_iter_id"])
+exports = {
+    "BENCHMARK_CONFIG": str(config_file),
+    "SCRIPTS_DIR": paths["scripts_dir"],
+    "CHECKPOINTS_DIR": paths["checkpoints_dir"],
+    "LOG_DIR": paths["log_dir"],
+    "CONDA_PROFILE": paths["conda_profile"],
+    "CONDA_ENV": paths["conda_env"],
+    "N_ITERATIONS": iteration["n_iterations"],
+    "ITER_ID": iter_id,
+    "ITER_ENV_VAR": iteration["slurm_env_var"],
+    "METRICS_OUTPUT_FILE": cfg["metrics"]["output_file"],
+    "MTX_COUNTS_FILE": cfg["export"]["mtx_counts"],
+    "R_EMBEDDING_FILES": " ".join(cfg["r_integration"]["embedding_files"].values()),
+}
+for key, value in exports.items():
+    print(f"export {key}={shlex.quote(str(value))}")
+PY
+)"
+
+source "${CONDA_PROFILE}"
+conda activate "${CONDA_ENV}"
+export LD_PRELOAD=$CONDA_PREFIX/lib/libstdc++.so.6
+export "${ITER_ENV_VAR}=${ITER_ID}"
+
+set -euo pipefail
+
+CHECKPOINT_SUBDIR="subsample_iter_${ITER_ID}"
+CHECKPOINT_DIR="${CHECKPOINTS_DIR}/${CHECKPOINT_SUBDIR}"
+
+mkdir -p "${LOG_DIR}" "${CHECKPOINT_DIR}"
+
+echo "========================================================================"
+echo "STARTING BENCHMARK PIPELINE - ITERATION ${ITER_ID} / ${N_ITERATIONS}"
+echo "Config: ${CONFIG_FILE}"
+echo "Time: $(date)"
+echo "========================================================================"
+
+log_step() {
+    echo -e "\n[$(date '+%Y-%m-%d %H:%M:%S')] ── $* ────────────────────────────────"
+}
+
+log_step "STEP 1: Executing Python Integrations (scVI, scANVI, scPoli, etc.)"
+
+python "${SCRIPTS_DIR}/python_integration_methods.py" --config "${CONFIG_FILE}"
+
+echo "Checking for exported R inputs..."
+if [ -f "${CHECKPOINT_DIR}/${MTX_COUNTS_FILE}" ]; then
+    echo "Matrix exchange files detected."
+else
+    echo "FATAL: Step 1 finished but '${MTX_COUNTS_FILE}' is missing. Aborting."
+    exit 1
+fi
+
+log_step "STEP 2: Executing R Integrations (Processing MTX -> CSV Embeddings)"
+
+Rscript "${SCRIPTS_DIR}/R_integration_methods.R" --config "${CONFIG_FILE}"
+
+echo "Checking for R coordinates..."
+MISSING_CSVS=0
+for csv in ${R_EMBEDDING_FILES}; do
+    if [ ! -f "${CHECKPOINT_DIR}/${csv}" ]; then
+        echo "Warning: Missing ${csv}"
+        MISSING_CSVS=$((MISSING_CSVS + 1))
+    fi
+done
+
+R_EMBEDDING_COUNT=$(echo "${R_EMBEDDING_FILES}" | wc -w)
+if [ "${MISSING_CSVS}" -eq "${R_EMBEDDING_COUNT}" ]; then
+    echo "FATAL: All R integrations failed. Step 3 cannot proceed. Aborting."
+    exit 1
+fi
+
+log_step "STEP 3: Compiling Final scIB Benchmark Metrics"
+
+python "${SCRIPTS_DIR}/run_metrics_updated.py" --config "${CONFIG_FILE}"
+
+echo ""
+echo "========================================================================"
+echo "SUCCESS: Iteration ${ITER_ID} has successfully run to completion"
+echo "Checkpoint location: ${CHECKPOINT_DIR}"
+echo "Final Metrics Matrix: ${CHECKPOINT_DIR}/${METRICS_OUTPUT_FILE}"
+echo "Finish Time: $(date)"
+echo "========================================================================"
