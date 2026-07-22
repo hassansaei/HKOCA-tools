@@ -96,7 +96,6 @@ Write the full atlas with new integrated annotation columns to disk.
 Differences from the original script:
 
 - Paths and parameters moved to YAML config
-- Emojis and decorative comments removed
 - `--config` flag support added
 
 All processing logic is unchanged.
