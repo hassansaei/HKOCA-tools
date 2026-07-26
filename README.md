@@ -1,7 +1,8 @@
 # Human Kidney Organoid Cell Atlas (NephAtlas)
 
-Modular toolkit for ambient RNA removal, QC/doublet filtering (with
-harmonization), annotation, and integration / atlas projection.
+Toolkit to process **new** single-cell datasets with the **same analysis
+pipeline** used to build the Human Kidney Organoid Cell Atlas, then place
+those datasets onto the atlas for comparison with the reference.
 
 ## Modules
 
@@ -28,7 +29,7 @@ hkoca/
 conda/                      # Stage-specific conda / Apptainer environments
 ```
 
-**QC-filter always harmonizes before doublet/QC** — harmonization is not a
+**QC-filter always harmonizes before doublet/QC** - harmonization is not a
 separate public module.
 
 ## Install
