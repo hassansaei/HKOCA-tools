@@ -1,9 +1,9 @@
 # HKOCA QC & doublet detection configuration.
-# Used by: hkoca qc-filter run | hkoca qc-filter qc
+# Used by: hkoca qc-filter
 # CLI flags override matching values in this file.
 
 # Directory of input Seurat .rds files.
-# For hkoca qc-filter run this is overridden to the harmonize output_root.
+# For hkoca qc-filter this is overridden to the harmonize output_root.
 rds_dir:
 
 # Base directory for QC outputs (Summary, filtered RDS, logs).

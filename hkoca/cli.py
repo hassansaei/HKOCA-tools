@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
             "modules:\n"
             "  pipeline      End-to-end A-Z analysis\n"
             "  cellbender   Ambient RNA removal (h5 | mtx)\n"
-            "  qc-filter    Harmonize then doublets + QC (run|harmonize|qc)\n"
+            "  qc-filter    Harmonize then doublets + QC (single command)\n"
             "  annotation   Cell-type annotation\n"
             "  integration  Batch integration / atlas projection\n"
         ),
@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser(
         "qc-filter",
-        help="Harmonize then doublet/QC (run | harmonize | qc)",
+        help="Harmonize then doublet detection + QC (always both, in order)",
     )
     sub.add_parser("annotation", help="Cell-type annotation")
     sub.add_parser("integration", help="Batch integration / atlas projection")

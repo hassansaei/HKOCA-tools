@@ -1,6 +1,6 @@
 """Gene-space harmonization (internal step of qc_filter).
 
-Not a public module. Run via ``hkoca qc-filter harmonize``.
+Not a public module. Invoked automatically by ``hkoca qc-filter`` (step 1).
 """
 
 from __future__ import annotations

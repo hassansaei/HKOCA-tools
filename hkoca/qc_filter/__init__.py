@@ -1,24 +1,22 @@
 """QC-filter stage: gene-space harmonization then doublet detection + QC.
 
-Order
------
+Always runs both steps in order:
+
 1. Harmonize gene space (CellRanger / H5AD / MTX -> Seurat RDS via --to-rds)
 2. Doublet detection (scDblFinder) + QC threshold filtering (R)
 
 Upstream CellBender is optional.
 
-CLI
----
-  hkoca qc-filter run ...          harmonize --to-rds, then QC R script
-  hkoca qc-filter harmonize ...    harmonization only
-  hkoca qc-filter qc ...           QC R script only (expects existing RDS)
+CLI::
+
+    hkoca qc-filter --csv meta.csv --gtf genes.gtf --output results \\
+      --qc-output results/qc_filter --stage all
 
 Environments
 ------------
-- Harmonization: ``conda/environment_harmonize.yaml`` (includes R for --to-rds)
-- Full QC R stack: ``conda/environment_qc.yaml``
-  For ``run``, use an env that provides both scanpy and the QC R packages,
-  or run ``harmonize`` then ``qc`` in their respective envs.
+Use an env that provides scanpy (harmonize) and the QC R stack, or install
+``conda/environment_harmonize.yaml`` plus QC packages from
+``conda/environment_qc.yaml``.
 """
 
 from __future__ import annotations
@@ -54,43 +52,10 @@ def _setup_logging(verbose: bool = False) -> None:
     )
 
 
-def status_message() -> str:
-    script = r_script_path()
-    cfg = config_template_path()
-    return (
-        "QC-filter module - always harmonize first, then doublet detection + QC.\n"
-        "CellBender upstream is optional.\n"
-        "\n"
-        "Subcommands:\n"
-        "  hkoca qc-filter run ...         harmonize (--to-rds) then QC R script\n"
-        "  hkoca qc-filter harmonize ...   gene-space harmonization only\n"
-        "  hkoca qc-filter qc ...          QC R script only (existing RDS)\n"
-        "\n"
-        f"R script : {script}\n"
-        f"QC config: {cfg}\n"
-        "\n"
-        "Example (full stage):\n"
-        "  hkoca qc-filter run \\\n"
-        "    --csv meta.csv --gtf genes.gtf --output results \\\n"
-        "    --qc-output results/qc_filter --stage all"
-    )
-
-
-def _split_run_argv(argv: list[str]) -> tuple[list[str], argparse.Namespace]:
-    """Separate qc-filter run options from harmonize passthrough args."""
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--qc-config", default=None)
-    parser.add_argument("--qc-output", default=None)
-    parser.add_argument("--stage", default="all", choices=["all", "qc", "doublet"])
-    parser.add_argument("--skip-harmonize", action="store_true")
-    parser.add_argument("--skip-qc", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--force-overwrite", action="store_true")
-    parser.add_argument("--rds-pattern", default=r"_harmonized\.rds$")
-    parser.add_argument("-v", "--verbose", action="store_true")
-
-    qc_ns, harmonize_argv = parser.parse_known_args(argv)
-    return harmonize_argv, qc_ns
+def _ensure_to_rds(harmonize_argv: list[str]) -> list[str]:
+    if "--to-rds" in harmonize_argv:
+        return list(harmonize_argv)
+    return [*harmonize_argv, "--to-rds"]
 
 
 def _resolve_harmonize_output(harmonize_argv: list[str]) -> str:
@@ -112,15 +77,91 @@ def _resolve_harmonize_output(harmonize_argv: list[str]) -> str:
     return output_root
 
 
-def _ensure_to_rds(harmonize_argv: list[str]) -> list[str]:
-    if "--to-rds" in harmonize_argv:
-        return list(harmonize_argv)
-    return [*harmonize_argv, "--to-rds"]
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="hkoca qc-filter",
+        description=(
+            "Harmonize gene space (--to-rds), then run doublet detection + QC. "
+            "Both steps always run in that order."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "order (fixed):\n"
+            "  1. harmonize  gene space + Seurat RDS (--to-rds forced)\n"
+            "  2. qc         scDblFinder + QC filters (R)\n"
+            "\n"
+            "harmonize options (also via harmonize.config):\n"
+            "  --config, -w/--working-dir, --csv, --gtf, --output,\n"
+            "  --summary, --summary-only, --transgenes\n"
+            "\n"
+            "example:\n"
+            "  hkoca qc-filter --csv meta.csv --gtf genes.gtf --output results \\\n"
+            "    --qc-output results/qc_filter --stage all\n"
+        ),
+    )
+    parser.add_argument(
+        "--qc-config",
+        default=None,
+        help="Path to qc_config.dcf (default: CWD then package qc_config.dcf)",
+    )
+    parser.add_argument(
+        "--qc-output",
+        default=None,
+        help="QC output directory (default: <harmonize-output>/qc_filter)",
+    )
+    parser.add_argument(
+        "--stage",
+        default="all",
+        choices=["all", "qc", "doublet"],
+        help="QC R stage to run after harmonization (default: all)",
+    )
+    parser.add_argument(
+        "--rds-pattern",
+        default=r"_harmonized\.rds$",
+        help="RDS basename regex under harmonize output (default: _harmonized\\.rds$)",
+    )
+    parser.add_argument("--force-overwrite", action="store_true", help="Force QC reprocessing")
+    parser.add_argument("--dry-run", action="store_true", help="Print planned steps without running")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
+    parser.add_argument(
+        "--print-script",
+        action="store_true",
+        help="Print path to QC_scdbl_Combined.R and exit",
+    )
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Print path to packaged qc_config.dcf and exit",
+    )
+    return parser
 
 
-def _cmd_run(argv: list[str]) -> int:
-    harmonize_argv, qc_opts = _split_run_argv(argv)
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = _build_parser()
+
+    if argv and argv[0] in ("-h", "--help"):
+        parser.parse_args(argv)
+        return 0
+
+    qc_opts, harmonize_argv = parser.parse_known_args(argv)
     _setup_logging(qc_opts.verbose)
+
+    if qc_opts.print_script:
+        print(r_script_path())
+        return 0
+    if qc_opts.print_config:
+        print(config_template_path())
+        return 0
+
+    # Reject legacy split subcommands so usage stays a single command.
+    if harmonize_argv and harmonize_argv[0] in ("run", "harmonize", "qc"):
+        logger.error(
+            "Split subcommands were removed. Use: hkoca qc-filter [options]\n"
+            "Harmonization always runs first, then the QC R script."
+        )
+        return 2
+
     harmonize_argv = _ensure_to_rds(harmonize_argv)
 
     try:
@@ -133,29 +174,21 @@ def _cmd_run(argv: list[str]) -> int:
 
     qc_output = qc_opts.qc_output or os.path.join(output_root, "qc_filter")
 
-    logger.info("QC-filter run order: 1) harmonize (--to-rds)  2) QC R script")
+    logger.info("QC-filter: 1) harmonize (--to-rds)  2) QC R script")
     logger.info("Harmonize output_root (RDS search root): %s", output_root)
     logger.info("QC output_dir: %s", qc_output)
 
-    if not qc_opts.skip_harmonize:
-        from hkoca.qc_filter.harmonize.cli import main as harmonize_main
-
-        if qc_opts.dry_run:
-            logger.info("[dry-run] would run: hkoca qc-filter harmonize %s", " ".join(harmonize_argv))
-        else:
-            logger.info("STEP 1/2: harmonization")
-            rc = int(harmonize_main(harmonize_argv) or 0)
-            if rc != 0:
-                logger.error("Harmonization failed; skipping QC.")
-                return rc
-    else:
-        logger.info("Skipping harmonization (--skip-harmonize)")
-
-    if qc_opts.skip_qc:
-        logger.info("Skipping QC (--skip-qc)")
-        return 0
-
+    from hkoca.qc_filter.harmonize.cli import main as harmonize_main
     from hkoca.qc_filter.qc_runner import run_qc
+
+    if qc_opts.dry_run:
+        logger.info("[dry-run] would run harmonize: %s", " ".join(harmonize_argv))
+    else:
+        logger.info("STEP 1/2: harmonization")
+        rc = int(harmonize_main(harmonize_argv) or 0)
+        if rc != 0:
+            logger.error("Harmonization failed; QC not started.")
+            return rc
 
     logger.info("STEP 2/2: doublet detection + QC filtering")
     return run_qc(
@@ -170,140 +203,8 @@ def _cmd_run(argv: list[str]) -> int:
     )
 
 
-def _cmd_qc(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog="hkoca qc-filter qc",
-        description="Run doublet detection + QC filtering on existing Seurat RDS",
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Path to qc_config.dcf (default: CWD then package qc_config.dcf)",
-    )
-    parser.add_argument(
-        "--rds-dir",
-        default=None,
-        help="Directory containing input .rds files (harmonize output_root)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=None,
-        help="QC output base directory",
-    )
-    parser.add_argument(
-        "--stage",
-        default="all",
-        choices=["all", "qc", "doublet"],
-        help="QC stage to run (default: all)",
-    )
-    parser.add_argument(
-        "--rds-pattern",
-        default=r"_harmonized\.rds$",
-        help="Regex for RDS basenames (default: _harmonized\\.rds$)",
-    )
-    parser.add_argument(
-        "--no-recursive",
-        action="store_true",
-        help="Do not search rds-dir recursively",
-    )
-    parser.add_argument("--force-overwrite", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument(
-        "--print-script",
-        action="store_true",
-        help="Print path to QC_scdbl_Combined.R and exit",
-    )
-    parser.add_argument(
-        "--print-config",
-        action="store_true",
-        help="Print path to packaged qc_config.dcf and exit",
-    )
-    parser.add_argument("-v", "--verbose", action="store_true")
-    args = parser.parse_args(argv)
-    _setup_logging(args.verbose)
-
-    if args.print_script:
-        print(r_script_path())
-        return 0
-    if args.print_config:
-        print(config_template_path())
-        return 0
-
-    if not args.rds_dir or not args.output_dir:
-        parser.error("--rds-dir and --output-dir are required unless using --print-script/--print-config")
-
-    from hkoca.qc_filter.qc_runner import run_qc
-
-    return run_qc(
-        rds_dir=args.rds_dir,
-        output_dir=args.output_dir,
-        config=args.config,
-        stage=args.stage,
-        recursive=not args.no_recursive,
-        rds_pattern=args.rds_pattern,
-        force_overwrite=args.force_overwrite,
-        dry_run=args.dry_run,
-    )
-
-
-def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-
-    parser = argparse.ArgumentParser(
-        prog="hkoca qc-filter",
-        description=(
-            "Harmonization then doublet detection + QC filtering "
-            "(optional CellBender upstream)"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "order:\n"
-            "  1. harmonize  (gene space + optional --to-rds)\n"
-            "  2. qc         (scDblFinder + QC filters via R)\n"
-        ),
-    )
-    sub = parser.add_subparsers(dest="subcommand")
-    sub.add_parser(
-        "run",
-        help="Run harmonize (--to-rds) then QC R script",
-    )
-    sub.add_parser(
-        "harmonize",
-        help="Gene-space harmonization only (use --to-rds for Seurat RDS)",
-    )
-    sub.add_parser(
-        "qc",
-        help="Run QC R script only on existing RDS",
-    )
-
-    if not argv or argv[0] in ("-h", "--help"):
-        if argv and argv[0] in ("-h", "--help"):
-            parser.parse_args(argv)
-            return 0
-        print(status_message())
-        return 0
-
-    subcommand = argv[0]
-    rest = argv[1:]
-
-    if subcommand == "run":
-        return _cmd_run(rest)
-
-    if subcommand == "harmonize":
-        from hkoca.qc_filter.harmonize.cli import main as harmonize_main
-
-        return int(harmonize_main(rest) or 0)
-
-    if subcommand == "qc":
-        return _cmd_qc(rest)
-
-    parser.error(f"unknown subcommand: {subcommand}")
-    return 2
-
-
 __all__ = [
     "config_template_path",
     "main",
     "r_script_path",
-    "status_message",
 ]

@@ -8,11 +8,11 @@ the 24,100 protein-coding + lncRNA genes from GRCh38.104.
 
 Usage
 -----
-    hkoca qc-filter harmonize [-w DIR] [OPTIONS]
-    python -m hkoca.qc_filter.harmonize [-w DIR] [OPTIONS]
+    hkoca qc-filter [-w DIR] [OPTIONS]
+    python -m hkoca.qc_filter [-w DIR] [OPTIONS]
 
-Config file: harmonize.config (CWD or package).
-Precedence: CLI flags > harmonize.config > environment variables.
+Config files: harmonize.config and qc_config.dcf (CWD or package).
+Precedence: CLI flags > config files > environment variables.
 
 All arguments are optional when the corresponding paths are set in
 harmonize.config or as environment variables.
@@ -82,16 +82,13 @@ Outputs per study
 Examples
 --------
     # All paths from harmonize.config in CWD
-    hkoca qc-filter harmonize
+    hkoca qc-filter
 
     # Override output; add custom transgenes
-    hkoca qc-filter harmonize --output /data/results --transgenes EGFP,MCHERRY
+    hkoca qc-filter --output /data/results --transgenes EGFP,MCHERRY
 
-    # Full run: harmonize + Seurat export + summary plots
-    hkoca qc-filter harmonize --csv config/meta.csv --output results --to-rds --summary
-
-    # Re-generate plots only (pipeline already ran)
-    hkoca qc-filter harmonize --summary-only --output /data/results
+    # Full run: harmonize (--to-rds) then QC
+    hkoca qc-filter --csv config/meta.csv --gtf genes.gtf --output results --summary
 """
 
 import os

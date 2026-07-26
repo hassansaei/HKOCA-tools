@@ -4,33 +4,35 @@ Toolkit to process **new** single-cell datasets with the **same analysis
 pipeline** used to build the Human Kidney Organoid Cell Atlas, then place
 those datasets onto the atlas for comparison with the reference.
 
+Typical path: CellRanger outputs -> ambient RNA removal (CellBender) ->
+gene-space harmonization and QC/doublet filtering -> annotation -> integration /
+projection onto the atlas.
+
 ## Modules
 
 | CLI | Package | Role |
 |---|---|---|
-| `hkoca pipeline` | `hkoca.pipeline` | End-to-end A–Z analysis (orchestrator) |
+| `hkoca pipeline` | `hkoca.pipeline` | End-to-end A-Z analysis (orchestrator) |
 | `hkoca cellbender h5` | `hkoca.cellbender` | CellBender on CellRanger raw H5 |
 | `hkoca cellbender mtx` | `hkoca.cellbender` | CellBender on CellRanger MTX dirs |
-| `hkoca qc-filter run` | `hkoca.qc_filter` | Harmonize (`--to-rds`) then doublet/QC |
-| `hkoca qc-filter harmonize` | `hkoca.qc_filter.harmonize` | Harmonization only |
-| `hkoca qc-filter qc` | `hkoca.qc_filter` | QC R script only (existing RDS) |
+| `hkoca qc-filter` | `hkoca.qc_filter` | Harmonize (`--to-rds`) then doublet/QC |
 | `hkoca annotation` | `hkoca.annotation` | Cell-type annotation |
 | `hkoca integration` | `hkoca.integration` | Batch integration / atlas projection |
 
 ```
 hkoca/
-  pipeline/                 # A–Z orchestrator
+  pipeline/                 # A-Z orchestrator
   cellbender/               # CellBender only
   qc_filter/
-    harmonize/              # gene-space harmonization (before QC)
-    r/                      # doublet detection + QC (R / scDblFinder)
+    harmonize/              # internal: gene-space harmonization (step 1)
+    r/                      # internal: doublet detection + QC (step 2)
   annotation/
   integration/
 conda/                      # Stage-specific conda / Apptainer environments
 ```
 
-**QC-filter always harmonizes before doublet/QC** - harmonization is not a
-separate public module.
+`hkoca qc-filter` is a single command: harmonization always runs first, then
+the QC R script. There are no separate harmonize/qc CLIs.
 
 ## Install
 
@@ -47,25 +49,18 @@ hkoca --version
 hkoca pipeline --list-stages
 hkoca cellbender h5 --help
 hkoca cellbender mtx --help
-hkoca qc-filter
-hkoca qc-filter run --help
-hkoca qc-filter harmonize --help
-hkoca qc-filter qc --print-script
+hkoca qc-filter --help
 hkoca annotation
 hkoca integration
 ```
 
-### QC-filter order
+### QC-filter
 
 ```bash
-# 1 + 2 in one command (harmonize always first, forces --to-rds)
-hkoca qc-filter run \
+# Always: harmonize (--to-rds) then doublet detection + QC
+hkoca qc-filter \
   --csv meta.csv --gtf genes.gtf --output results \
   --qc-output results/qc_filter --stage all
-
-# Or stepwise:
-hkoca qc-filter harmonize --csv meta.csv --gtf genes.gtf --output results --to-rds
-hkoca qc-filter qc --rds-dir results --output-dir results/qc_filter --stage all
 ```
 
 ### CellBender quick start

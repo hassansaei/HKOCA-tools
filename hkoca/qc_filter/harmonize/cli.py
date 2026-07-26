@@ -19,8 +19,8 @@ logger = logging.getLogger("harmonize_atlas")
 
 def parse_args(argv: list[str] | None = None):
     p = argparse.ArgumentParser(
-        prog="hkoca qc-filter harmonize",
-        description="scRNA-seq atlas gene-space harmonization (qc-filter stage)",
+        prog="hkoca qc-filter",
+        description="scRNA-seq atlas gene-space harmonization (qc-filter step 1)",
     )
     p.add_argument(
         "--config",
