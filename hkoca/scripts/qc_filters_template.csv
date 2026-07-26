@@ -1,0 +1,3 @@
+Dataset_Name,Lower_Feature_Method,Upper_Feature_Method,Lower_Count_Method,Upper_Count_Method,Upper_Mito_Method
+sample_01_singlets,lower_tri,mad3,manual_1000,mad3,renyi
+sample_02_singlets,manual_200,upper_tri,manual_500,knee,manual_15

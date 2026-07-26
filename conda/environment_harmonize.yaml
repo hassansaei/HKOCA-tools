@@ -1,0 +1,33 @@
+name: hkoca_harmonize
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Base
+  - python=3.11
+
+  # Core Python stack (CellRanger H5/MTX/H5AD I/O + gene harmonization)
+  - scanpy
+  - anndata
+  - pandas
+  - numpy
+  - scipy
+  - h5py
+
+  # Summary plots (--summary / --summary-only)
+  - matplotlib
+  - seaborn
+
+  # R bridge for --to-rds (Seurat export consumed by QC)
+  - r-base>=4.2
+  - r-seurat>=4.3
+  - r-seuratobject
+  - r-matrix
+  - bioconductor-singlecellexperiment
+
+  # Python <-> R interop (pinned for anndata2ri compatibility)
+  - pip
+  - pip:
+      - rpy2==3.6.3
+      - anndata2ri==2.0

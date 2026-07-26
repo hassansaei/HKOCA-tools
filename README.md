@@ -1,1 +1,1 @@
-# Human Kidney Organoid Cell Atlas (HKOCA) 
+# Human Kidney Organoid Cell Atlas (NephAtlas) 

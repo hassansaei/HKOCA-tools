@@ -3,10 +3,4 @@
 *.log
 *.sif
 .env
-data/data_loader/
-data/raw/
-data/preprocess/
-data/processed/
-data/cellXgene/
-containers/
 .DS_Store

@@ -1,0 +1,66 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HKOCA QC & Doublet Detection Pipeline - Configuration File
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ── Global Paths ──────────────────────────────────────────────────────────────
+# Directory containing input .rds files to process
+rds_dir: !! /path to rds files directory/ !!
+
+# Base directory where results (Summary, Filtered RDS, Logs) will be saved
+output_dir: !! /Output directory/ !!
+
+# ── Output Subdirectories ─────────────────────────────────────────────────────
+# (Relative to output_dir)
+summary_subdir: Summary
+filtered_subdir: qc_filtered_rds
+doublet_subdir: doublet_filtered_rds
+log_file: logs/qc_run.log
+
+
+# ── Plotting Settings ──
+plot_dpi: 300
+plot_bg: white
+plot_base_width: 6
+plot_base_height: 5
+
+
+# ── Processing Filters ────────────────────────────────────────────────────────
+# File pattern to search for in rds_dir
+rds_pattern: \.rds$
+
+# Search in subfolders of rds_dir?
+recursive_discovery: FALSE
+
+# Safety flag to skip datasets known to be low quality or problematic
+skip_noisy_datasets: TRUE
+
+# FIXED: Must be on a single line so the DCF format parses it as a single value
+noisy_datasets: 
+
+# ── scDblFinder Parameters ────────────────────────────────────────────────────
+# Batch column for doublet detection (usually donor or sample)
+dbl_batch_col: sample_id
+
+# Samples to entirely bypass scDblFinder calculations (marked completely as singlets) without .rds extension
+skip_scdblfinder_samples:
+
+# Hard filters before doublet detection (prevents noise from skewing estimates)
+dbl_min_count: 100
+dbl_min_feature: 50
+
+# PC dimensions for UMAP/Clustering internal to scDblFinder
+dbl_umap_dims: 20
+
+# Default chemistry if not specified in overrides below
+dbl_default_platform: 10x
+
+# ── Platform-specific DBR defaults (non-10x) ─────────────────────────────────
+# For platforms where no 10x-style multiplet rate table exists, provide a fixed
+# DBR estimate.  Keys follow:  platform_dbr.<platform_name>: <fraction>
+platform_dbr.dropseq: 0.049
+platform_dbr.pipseq: 0.07
+
+
+# ── rds to h5ad conversion (needed for downstream) ───────────────────────────────────────────
+run_h5ad_conversion: TRUE
+h5ad_output_subdir: h5ad_converted

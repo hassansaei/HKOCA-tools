@@ -1,0 +1,124 @@
+Bootstrap: docker
+From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+%labels
+    Author          Haythem Mami
+    Version         0.3.2
+    Description     CellBender v0.3.2 for scRNA-seq ambient RNA removal
+    CUDA_Version    11.8
+    Python_Version  3.10
+
+%help
+    CellBender v0.3.2 container with CUDA 11.8 support.
+
+    Build:
+        export APPTAINER_TMPDIR=/your/scratch/apptainer_tmp
+        export APPTAINER_CACHEDIR=/your/scratch/apptainer_cache
+        mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR
+        apptainer build cellbender_v0.3.2.sif cellbender_v0.3.2.def
+
+    Run on CPU:
+        apptainer run cellbender_v0.3.2.sif \
+            remove-background --input raw.h5 --output out.h5
+
+    Run on GPU:
+        apptainer run --nv cellbender_v0.3.2.sif \
+            remove-background --cuda --input raw.h5 --output out.h5
+
+    Check GPU:
+        apptainer exec --nv cellbender_v0.3.2.sif \
+            python -c "import torch; print(torch.cuda.is_available())"
+
+    SLURM example:
+        #SBATCH --gres=gpu:1
+        module load apptainer
+        apptainer run --nv cellbender_v0.3.2.sif \
+            remove-background --cuda --input raw.h5 --output out.h5
+
+%environment
+    export PATH=/opt/miniforge/envs/cellbender/bin:/opt/miniforge/bin:$PATH
+    export CONDA_DEFAULT_ENV=cellbender
+    export CONDA_PREFIX=/opt/miniforge/envs/cellbender
+    export TORCH_HOME=/tmp/torch_cache
+    export XDG_CACHE_HOME=/tmp/xdg_cache
+    export MPLCONFIGDIR=/tmp/matplotlib
+    export NUMBA_CACHE_DIR=/tmp/numba_cache
+    export PYTHONDONTWRITEBYTECODE=1
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+%post
+    set -eu
+
+    # Redirect build-time caches to inside the sandbox
+    mkdir -p /opt/tmp /opt/pip_tmp /opt/conda_pkgs
+    export TMPDIR=/opt/tmp
+    export TEMP=/opt/tmp
+    export TMP=/opt/tmp
+    export PIP_CACHE_DIR=/opt/pip_tmp
+    export PYTHONPYCACHEPREFIX=/opt/tmp/pycache
+    export CONDA_PKGS_DIRS=/opt/conda_pkgs
+    export XDG_CACHE_HOME=/opt/tmp/xdg
+    export MPLCONFIGDIR=/opt/tmp/matplotlib
+    mkdir -p /opt/tmp/xdg /opt/tmp/matplotlib /opt/tmp/pycache
+
+    # System packages
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y --no-install-recommends \
+        wget \
+        bzip2 \
+        ca-certificates \
+        curl \
+        git \
+        libhdf5-dev \
+        pkg-config
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+    # Install Miniforge
+    wget -q \
+        https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+        -O /opt/tmp/miniforge.sh
+    bash /opt/tmp/miniforge.sh -b -p /opt/miniforge
+    rm /opt/tmp/miniforge.sh
+
+    export PATH=/opt/miniforge/bin:$PATH
+    conda config --system --set auto_activate_base false
+
+    # Create cellbender environment with Python 3.10
+    conda create -y -n cellbender python=3.10
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate cellbender
+
+    # Install PyTorch and CellBender in a single step to force the version pin
+    pip install \
+        --no-cache-dir \
+        torch==1.13.1+cu117 \
+        "numpy<2" \
+        cellbender==0.3.2 \
+        --extra-index-url https://download.pytorch.org/whl/cu117
+
+    # Install cellbender
+    pip install --no-cache-dir "numpy<2" cellbender==0.3.2
+
+    # Cleanup
+    conda clean --all --force-pkgs-dirs -y
+    pip cache purge || true
+    find /opt/miniforge -name "*.pyc" -delete 2>/dev/null || true
+    find /opt/miniforge -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+    rm -rf /opt/tmp /opt/pip_tmp /opt/conda_pkgs
+
+%runscript
+    exec /opt/miniforge/envs/cellbender/bin/cellbender "$@"
+
+%test
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate cellbender
+    /opt/miniforge/envs/cellbender/bin/python -c "
+import cellbender, torch
+print('CellBender:', cellbender.__version__)
+print('PyTorch:   ', torch.__version__)
+print('CUDA built:', torch.version.cuda)
+print('CUDA avail (needs GPU node):', torch.cuda.is_available())
+print('==> All OK')
+"
