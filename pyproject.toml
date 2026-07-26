@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hkoca"
+dynamic = ["version"]
+description = "NephAtlas / HKOCA modular single-cell kidney organoid analysis toolkit"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "HKOCA / NephAtlas developers" }]
+keywords = ["single-cell", "organoid", "kidney", "scanpy", "cellbender"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# Stage-specific deps live in conda/environment_*.yaml.
+# Install the package into the matching conda env with: pip install -e .
+dependencies = []
+
+[project.optional-dependencies]
+qc-filter = [
+  "scanpy",
+  "anndata",
+  "pandas",
+  "numpy",
+  "scipy",
+  "h5py",
+  "matplotlib",
+  "seaborn",
+]
+
+[project.scripts]
+hkoca = "hkoca.cli:main"
+
+[project.urls]
+Repository = "https://github.com/hassansaei/HKOCA-tools"
+
+[tool.setuptools.dynamic]
+version = { attr = "hkoca._version.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["hkoca*"]
+
+[tool.setuptools.package-data]
+"hkoca.cellbender" = ["*.config"]
+"hkoca.qc_filter.harmonize" = ["*.config"]
+"hkoca.qc_filter.r" = ["*.R", "*.dcf", "*.csv"]

@@ -1,0 +1,46 @@
+# HKOCA QC & doublet detection configuration.
+# Used by: hkoca qc-filter run | hkoca qc-filter qc
+# CLI flags override matching values in this file.
+
+# Directory of input Seurat .rds files.
+# For hkoca qc-filter run this is overridden to the harmonize output_root.
+rds_dir:
+
+# Base directory for QC outputs (Summary, filtered RDS, logs).
+output_dir:
+
+# Output subdirectories (relative to output_dir)
+summary_subdir: Summary
+filtered_subdir: qc_filtered_rds
+doublet_subdir: doublet_filtered_rds
+log_file: logs/qc_run.log
+
+# Plotting
+plot_dpi: 300
+plot_bg: white
+plot_base_width: 6
+plot_base_height: 5
+
+# Discovery
+# Harmonize writes <output>/<study>/rds/<study>_harmonized.rds
+rds_pattern: _harmonized\.rds$
+recursive_discovery: TRUE
+
+skip_noisy_datasets: TRUE
+noisy_datasets:
+
+# scDblFinder
+dbl_batch_col: sample_id
+skip_scdblfinder_samples:
+dbl_min_count: 100
+dbl_min_feature: 50
+dbl_umap_dims: 20
+dbl_default_platform: 10x
+
+# Non-10x platform DBR defaults
+platform_dbr.dropseq: 0.049
+platform_dbr.pipseq: 0.07
+
+# Optional H5AD export after QC
+run_h5ad_conversion: TRUE
+h5ad_output_subdir: h5ad_converted

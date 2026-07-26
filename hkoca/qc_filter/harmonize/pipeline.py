@@ -8,7 +8,11 @@ the 24,100 protein-coding + lncRNA genes from GRCh38.104.
 
 Usage
 -----
-    python harmonize.py [-w DIR] [OPTIONS]
+    hkoca qc-filter harmonize [-w DIR] [OPTIONS]
+    python -m hkoca.qc_filter.harmonize [-w DIR] [OPTIONS]
+
+Config file: harmonize.config (CWD or package).
+Precedence: CLI flags > harmonize.config > environment variables.
 
 All arguments are optional when the corresponding paths are set in
 harmonize.config or as environment variables.
@@ -77,25 +81,24 @@ Outputs per study
 
 Examples
 --------
-    # All paths from harmonize.config
-    python harmonize.py
+    # All paths from harmonize.config in CWD
+    hkoca qc-filter harmonize
 
     # Override output; add custom transgenes
-    python harmonize.py --output /data/results --transgenes EGFP,MCHERRY
+    hkoca qc-filter harmonize --output /data/results --transgenes EGFP,MCHERRY
 
     # Full run: harmonize + Seurat export + summary plots
-    python harmonize.py --csv config/meta.csv --output results --to-rds --summary
+    hkoca qc-filter harmonize --csv config/meta.csv --output results --to-rds --summary
 
     # Re-generate plots only (pipeline already ran)
-    python harmonize.py --summary-only --output /data/results
+    hkoca qc-filter harmonize --summary-only --output /data/results
 """
 
 import os
 import sys
 import gzip
-import argparse
-import configparser
 import collections
+import configparser
 import warnings
 import logging
 
@@ -107,6 +110,8 @@ import anndata
 import h5py
 from scipy.io import mmread
 from scipy.sparse import csr_matrix
+
+from hkoca.qc_filter.harmonize.config import get_summary_options
 
 warnings.simplefilter("ignore", FutureWarning)
 warnings.simplefilter("ignore", UserWarning)
@@ -139,86 +144,6 @@ def setup_logging(working_dir: str):
     logger.addHandler(fh)
     
     logger.info(f"Detailed debug log initialized at: {log_file}")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIG
-# ══════════════════════════════════════════════════════════════════════════════
-
-CONFIG_FILENAME = "harmonize.config"
-
-def _config_path(cli_config: str | None) -> str:
-    if cli_config and cli_config.strip():
-        return cli_config.strip()
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    p = os.path.join(script_dir, CONFIG_FILENAME)
-    if os.path.isfile(p):
-        return p
-    return os.path.join(os.getcwd(), CONFIG_FILENAME)
-
-def load_config(config_path: str) -> configparser.ConfigParser:
-    cfg = configparser.ConfigParser()
-    cfg.optionxform = str
-    if os.path.isfile(config_path):
-        cfg.read(config_path, encoding="utf-8")
-    return cfg
-
-def resolve_paths(args, cfg: configparser.ConfigParser) -> dict:
-    def get_path(cli_val, cfg_key: str, env_key: str, default: str = "") -> str:
-        if cli_val is not None and str(cli_val).strip():
-            return str(cli_val).strip()
-        if cfg.has_section("paths") and cfg.has_option("paths", cfg_key):
-            v = cfg.get("paths", cfg_key).strip()
-            if v:
-                return v
-        v = os.environ.get(env_key, "").strip()
-        if v:
-            return v
-        return default
-
-    working_dir = get_path(getattr(args, "working_dir", None), "working_dir", "WORKING_DIR", os.getcwd())
-    if not os.path.isabs(working_dir):
-        working_dir = os.path.abspath(working_dir)
-
-    return {
-        "gtf_file":     get_path(getattr(args, "gtf", None), "gtf_file", "GTF_FILE"),
-        "metadata_csv": get_path(getattr(args, "csv", None), "metadata_csv", "METADATA_CSV"),
-        "output_root":  get_path(getattr(args, "output", None), "output_root", "OUTPUT_ROOT"),
-        "working_dir":  working_dir,
-    }
-
-def get_summary_options(cfg: configparser.ConfigParser) -> dict:
-    defaults = {
-        "figure_dpi": 300,
-        "figure_extensions": ["png", "pdf"],
-        "report_subdir": "reports/atlas_summary",
-        "age_plot_top_n": 15,
-    }
-    if not cfg.has_section("summary"):
-        return defaults
-    out = dict(defaults)
-    if cfg.has_option("summary", "figure_dpi"):
-        try:
-            _v = cfg.getint("summary", "figure_dpi")
-            out["figure_dpi"] = _v if _v > 0 else defaults["figure_dpi"]
-        except ValueError:
-            pass
-    if cfg.has_option("summary", "figure_extensions"):
-        raw = cfg.get("summary", "figure_extensions").strip()
-        if raw:
-            parsed = [x.strip() for x in raw.split(",") if x.strip()]
-            out["figure_extensions"] = parsed or defaults["figure_extensions"]
-    if cfg.has_option("summary", "report_subdir"):
-        v = cfg.get("summary", "report_subdir").strip()
-        if v:
-            out["report_subdir"] = v
-    if cfg.has_option("summary", "age_plot_top_n"):
-        try:
-            _v = cfg.getint("summary", "age_plot_top_n")
-            out["age_plot_top_n"] = _v if _v > 0 else defaults["age_plot_top_n"]
-        except ValueError:
-            pass
-    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -982,108 +907,3 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
         plt.close(fig)
 
     logger.info(f"All report artifacts written to: {report_dir}/")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
-
-def parse_args():
-    p = argparse.ArgumentParser(description="scRNA-seq atlas harmonization pipeline")
-    p.add_argument("--config",  default=None, help="Path to harmonize.config")
-    p.add_argument("--working-dir", "-w", dest="working_dir", default=None, help="Working directory")
-    p.add_argument("--csv",     default=None, help="Path to metadata CSV")
-    p.add_argument("--gtf",     default=None, help="Path to GRCh38 GTF")
-    p.add_argument("--output",  default=None, help="Output root directory")
-    p.add_argument("--summary", action="store_true", help="Generate summary plots after pipeline")
-    p.add_argument("--summary-only", action="store_true", help="Skip pipeline, only generate plots")
-    p.add_argument("--to-rds", action="store_true", help="Convert harmonized .h5ad to Seurat .rds")
-    p.add_argument("--transgenes", default=None,
-                   help="Comma-separated transgene names to add to the reference gene set "
-                        "(e.g. --transgenes GFP,Cre,tdTomato). "
-                        "Can also be set in harmonize.config under [transgenes] names = ...")
-    return p.parse_args()
-
-def main():
-    args = parse_args()
-    
-    cfg = load_config(_config_path(args.config))
-    paths = resolve_paths(args, cfg)
-    working_dir  = paths["working_dir"]
-    gtf_file     = paths["gtf_file"]
-    metadata_csv = paths["metadata_csv"]
-    output_root  = paths["output_root"]
-
-    setup_logging(working_dir)
-
-    # ── Reproducibility: log runtime environment
-    logger.info("Python         : %s", sys.version.split()[0])
-    logger.debug(
-        "Package versions: scanpy=%s  anndata=%s  pandas=%s  numpy=%s  h5py=%s",
-        getattr(sc,      "__version__", "?"),
-        getattr(anndata, "__version__", "?"),
-        pd.__version__,
-        np.__version__,
-        h5py.__version__,
-    )
-    _resolved_cfg = _config_path(args.config)
-    logger.info(
-        "Config file    : %s%s",
-        _resolved_cfg,
-        "" if os.path.isfile(_resolved_cfg) else " (not found — using defaults)",
-    )
-
-    missing = []
-    if not gtf_file:
-        missing.append("GTF path")
-    if not args.summary_only:
-        if not metadata_csv: missing.append("Metadata CSV")
-        if not output_root:  missing.append("Output directory")
-    elif not output_root:
-        missing.append("Output directory for --summary-only")
-
-    if missing:
-        logger.error(f"Missing required inputs: {', '.join(missing)}")
-        sys.exit(1)
-
-    if metadata_csv and not os.path.isabs(metadata_csv):
-        metadata_csv = os.path.normpath(os.path.join(working_dir, metadata_csv))
-    if gtf_file and not os.path.isabs(gtf_file):
-        gtf_file = os.path.normpath(os.path.join(working_dir, gtf_file))
-    if output_root and not os.path.isabs(output_root):
-        output_root = os.path.normpath(os.path.join(working_dir, output_root))
-
-    logger.info("=== Atlas Harmonization Initialized ===")
-    logger.info(f"Working dir  : {working_dir}")
-    logger.info(f"GTF file     : {gtf_file}")
-    logger.info(f"Metadata CSV : {metadata_csv}")
-    logger.info(f"Output root  : {output_root}")
-
-    # ── Resolve transgene names: CLI > config file
-    transgene_names = set()
-    if getattr(args, "transgenes", None):
-        transgene_names = {t.strip() for t in args.transgenes.split(",") if t.strip()}
-    elif cfg.has_section("transgenes") and cfg.has_option("transgenes", "names"):
-        raw = cfg.get("transgenes", "names").strip()
-        transgene_names = {t.strip() for t in raw.split(",") if t.strip()}
-    if transgene_names:
-        logger.info(f"Transgenes added to reference: {sorted(transgene_names)}")
-
-    if not args.summary_only:
-        failed = run_pipeline(
-            metadata_csv=metadata_csv,
-            gtf_file=gtf_file,
-            output_root=output_root,
-            working_dir=working_dir,
-            to_rds=args.to_rds,
-            transgene_names=transgene_names,
-        )
-        if failed:
-            sys.exit(1)
-
-    if args.summary or args.summary_only:
-        logger.info("Generating summary plots...")
-        run_summary(scan_path=output_root or ".", cfg=cfg)
-
-if __name__ == "__main__":
-    main()

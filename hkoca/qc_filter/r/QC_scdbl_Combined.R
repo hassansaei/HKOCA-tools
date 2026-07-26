@@ -35,7 +35,7 @@ load_packages_safely <- function() {
     }
 
     if (length(missing) > 0) {
-        stop(sprintf("Missing required packages: %s\nPlease construct the environment using 'conda env create -f scripts/QC/environment_qc.yaml' and activate it.", paste(missing, collapse = ", ")))
+        stop(sprintf("Missing required packages: %s\nPlease construct the environment using 'conda env create -f conda/environment_qc.yaml' and activate it.", paste(missing, collapse = ", ")))
     }
 
     suppressPackageStartupMessages({
@@ -310,11 +310,16 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     mapping
 }
 
-# Canonical sample name: lowercase, strip .rds and common suffixes for consistent lookup.
+# Strip common harmonize / QC suffixes for consistent sample lookup.
 .canon_sample_name <- function(x) {
     s <- tolower(trimws(as.character(x)))
     s <- gsub("\\.rds$", "", s, ignore.case = TRUE)
-    s <- gsub("_harmonized_filtered$|_filtered$|_with_doublet_calls$|_singlets$", "", s, ignore.case = TRUE)
+    s <- gsub(
+        "_harmonized_filtered$|_harmonized$|_filtered$|_with_doublet_calls$|_singlets$",
+        "",
+        s,
+        ignore.case = TRUE
+    )
     s
 }
 
