@@ -1,0 +1,48 @@
+# Version control / CI
+.git
+.github
+.gitignore
+.gitattributes
+
+# Python artifacts
+**/__pycache__/
+**/*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments / secrets
+.env
+.venv/
+venv/
+*.sif
+
+# Local data and outputs
+data/
+input/
+output/
+results/
+out/
+*.h5
+*.h5ad
+*.rds
+*.bam
+*.fastq
+*.fastq.gz
+*.fq.gz
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.log
+*~
+
+# Apptainer def (cluster-only; conda YAML is the Docker source of truth)
+conda/*.def
