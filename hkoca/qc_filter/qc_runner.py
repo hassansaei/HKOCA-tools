@@ -1,4 +1,11 @@
-"""Invoke the bundled QC_scdbl_Combined.R engine."""
+"""Invoke the bundled QC_scdbl_Combined.R engine.
+
+QC R packages (scDblFinder, r-anndata, ...) live in the ``sc_qc_pipeline``
+conda env (``conda/environment_qc.yaml``). Harmonization usually runs in
+``hkoca_harmonize``, so this module resolves the QC env's ``Rscript`` and
+runs the subprocess with that env on ``PATH`` / ``CONDA_PREFIX`` — no manual
+``conda activate`` mid-pipeline.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +18,9 @@ from pathlib import Path
 
 logger = logging.getLogger("hkoca.qc_filter")
 
+# Matches ``name:`` in conda/environment_qc.yaml and docker/Dockerfile.
+DEFAULT_QC_ENV = "sc_qc_pipeline"
+
 
 def r_script_path() -> Path:
     return Path(resources.files("hkoca.qc_filter.r").joinpath("QC_scdbl_Combined.R")).resolve()
@@ -20,14 +30,116 @@ def packaged_qc_config() -> Path:
     return Path(resources.files("hkoca.qc_filter.r").joinpath("qc_config.dcf")).resolve()
 
 
+def _conda_roots() -> list[Path]:
+    """Candidate conda install roots (base prefixes that contain ``envs/``)."""
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def add(path: Path | None) -> None:
+        if path is None:
+            return
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        key = str(resolved)
+        if key in seen:
+            return
+        seen.add(key)
+        roots.append(resolved)
+
+    explicit = os.environ.get("CONDA_ROOT") or os.environ.get("MAMBA_ROOT_PREFIX")
+    if explicit:
+        add(Path(explicit))
+
+    prefix = os.environ.get("CONDA_PREFIX")
+    if prefix:
+        p = Path(prefix)
+        # .../envs/<name> -> base; otherwise treat as base itself
+        if p.parent.name == "envs":
+            add(p.parent.parent)
+        else:
+            add(p)
+
+    conda_exe = os.environ.get("CONDA_EXE") or shutil.which("conda")
+    if conda_exe:
+        # .../bin/conda or .../condabin/conda
+        add(Path(conda_exe).resolve().parent.parent)
+
+    # Docker / miniforge default used by this project's image
+    add(Path("/opt/conda"))
+
+    return roots
+
+
+def resolve_qc_env_prefix() -> Path | None:
+    """Return the QC conda env prefix if it exists on this machine."""
+    env_name = os.environ.get("HKOCA_QC_ENV", DEFAULT_QC_ENV).strip() or DEFAULT_QC_ENV
+
+    # Already running inside the QC env
+    current = os.environ.get("CONDA_PREFIX")
+    if current:
+        cur = Path(current)
+        if cur.name == env_name and (cur / "bin" / "Rscript").is_file():
+            return cur.resolve()
+
+    for root in _conda_roots():
+        candidate = root / "envs" / env_name
+        if (candidate / "bin" / "Rscript").is_file():
+            return candidate.resolve()
+
+    return None
+
+
 def find_rscript() -> str:
+    """Locate Rscript for QC, preferring ``sc_qc_pipeline`` over PATH."""
+    override = os.environ.get("HKOCA_RSCRIPT", "").strip()
+    if override:
+        if not Path(override).is_file():
+            raise FileNotFoundError(f"HKOCA_RSCRIPT is set but not a file: {override}")
+        return str(Path(override).resolve())
+
+    qc_prefix = resolve_qc_env_prefix()
+    if qc_prefix is not None:
+        rscript = qc_prefix / "bin" / "Rscript"
+        logger.info("Using QC conda env Rscript: %s", rscript)
+        return str(rscript)
+
     exe = shutil.which("Rscript")
     if exe is None:
+        env_name = os.environ.get("HKOCA_QC_ENV", DEFAULT_QC_ENV)
         raise FileNotFoundError(
-            "Rscript not found on PATH. Activate the QC conda env "
-            "(conda/environment_qc.yaml) or an env that provides R + Seurat."
+            "Rscript not found. Create the QC conda env and ensure it is "
+            f"discoverable (expected env name '{env_name}' from "
+            "conda/environment_qc.yaml), or set HKOCA_RSCRIPT to an Rscript "
+            "that provides scDblFinder + anndata."
         )
+
+    logger.warning(
+        "QC env '%s' not found; using Rscript on PATH (%s). "
+        "If QC fails with missing packages, create conda/environment_qc.yaml "
+        "or set HKOCA_QC_ENV / HKOCA_RSCRIPT.",
+        os.environ.get("HKOCA_QC_ENV", DEFAULT_QC_ENV),
+        exe,
+    )
     return exe
+
+
+def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
+    """Run R under the same conda prefix as ``rscript`` (reticulate + libs)."""
+    env = os.environ.copy()
+    bin_dir = Path(rscript).resolve().parent
+    prefix = bin_dir.parent
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["CONDA_PREFIX"] = str(prefix)
+    env.pop("PYTHONHOME", None)
+
+    py = bin_dir / "python"
+    if py.is_file():
+        # Force reticulate/anndata onto the QC env Python, not harmonize's.
+        env["RETICULATE_PYTHON"] = str(py)
+
+    return env
 
 
 def default_qc_config() -> Path:
@@ -109,7 +221,11 @@ def run_qc(
         return 0
 
     os.makedirs(output_dir, exist_ok=True)
-    result = subprocess.run(cmd, check=False)
+    result = subprocess.run(
+        cmd,
+        check=False,
+        env=_subprocess_env_for_rscript(cmd[0]),
+    )
     if result.returncode != 0:
         logger.error("QC R script failed (exit %s)", result.returncode)
         return result.returncode

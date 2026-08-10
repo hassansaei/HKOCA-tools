@@ -1,11 +1,8 @@
 # Human Kidney Organoid Cell Atlas (NephAtlas)
 
-Toolkit to process **new** single-cell datasets with the **same analysis
-pipeline** used to build the Human Kidney Organoid Cell Atlas, then place
-those datasets onto the atlas for comparison with the reference.
+Toolkit to process **new** single-cell datasets with the **same analysis pipeline** used to build the Human Kidney Organoid Cell Atlas, then place those datasets onto the atlas for comparison with the reference.
 
-Typical path: CellRanger outputs -> ambient RNA removal (CellBender) ->
-gene-space harmonization and QC/doublet filtering -> annotation -> integration /
+Typical path: CellRanger outputs -> ambient RNA removal (CellBender) -> gene-space harmonization and QC/doublet filtering -> annotation -> integration /
 projection onto the atlas.
 
 ## Modules
@@ -38,9 +35,14 @@ the QC R script. There are no separate harmonize/qc CLIs.
 
 ```bash
 conda env create -f conda/environment_harmonize.yaml
+conda env create -f conda/environment_qc.yaml
 conda activate hkoca_harmonize
 pip install -e .
 ```
+
+`hkoca qc-filter` runs harmonization in the active env, then automatically
+invokes the QC R script with `sc_qc_pipeline` (no mid-run `conda activate`).
+Override with `HKOCA_QC_ENV` or `HKOCA_RSCRIPT` if needed.
 
 ## CLI
 

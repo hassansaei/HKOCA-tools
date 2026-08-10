@@ -16,9 +16,9 @@
 #       qc-filter --csv /data/meta.csv --gtf /data/genes.gtf --output /out
 #
 # Stage environments (set HKOCA_ENV to switch; default is hkoca_harmonize):
-#   hkoca_harmonize   - gene-space harmonization / default CLI
+#   hkoca_harmonize   - gene-space harmonization / default CLI (incl. qc-filter)
 #   hkoca_cellbender  - CellBender ambient RNA removal (GPU optional)
-#   sc_qc_pipeline    - doublet detection + QC (R / scDblFinder)
+#   sc_qc_pipeline    - QC R stack; qc-filter hands off to this env automatically
 #
 #   docker run --rm --platform linux/amd64 -e HKOCA_ENV=hkoca_cellbender \
 #       --gpus all hkoca:local \

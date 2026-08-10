@@ -14,9 +14,9 @@ CLI::
 
 Environments
 ------------
-Use an env that provides scanpy (harmonize) and the QC R stack, or install
-``conda/environment_harmonize.yaml`` plus QC packages from
-``conda/environment_qc.yaml``.
+Harmonization uses the active env (typically ``hkoca_harmonize``). The QC R
+step automatically uses ``sc_qc_pipeline`` from ``conda/environment_qc.yaml``
+when that env is present (override with ``HKOCA_QC_ENV`` / ``HKOCA_RSCRIPT``).
 """
 
 from __future__ import annotations
