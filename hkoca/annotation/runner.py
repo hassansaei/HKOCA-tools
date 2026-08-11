@@ -349,6 +349,21 @@ def _map_levels_to_obs(
     return annotation_cols
 
 
+def _plot_title_for_obs_key(color_key: str) -> str:
+    """Short plot title from an obs column name (no sample / file stem)."""
+    key = str(color_key)
+    if key.startswith("leiden_res_"):
+        return f"Leiden resolution {key.replace('leiden_res_', '', 1)}"
+    if key.startswith("Level_") and "_res" in key:
+        # Level_1_res0.4 -> Level 1 (resolution 0.4)
+        head, _, res = key.partition("_res")
+        level = head.replace("_", " ")
+        return f"{level} (resolution {res})"
+    if key.startswith("leiden"):
+        return "Leiden clusters"
+    return key.replace("_", " ")
+
+
 def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: int) -> None:
     import matplotlib
 
@@ -370,7 +385,8 @@ def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: in
         cmap = plt.get_cmap("tab20", max(len(cats), 1))
         colors = {c: cmap(i) for i, c in enumerate(cats)}
 
-    fig, ax = plt.subplots(figsize=(8.5, 6.0) if palette is not None else (7, 5.5))
+    # Width slightly larger than height (e.g. 8 x 6).
+    fig, ax = plt.subplots(figsize=(8, 6))
     for c in cats:
         mask = labels == c
         ax.scatter(
@@ -379,7 +395,7 @@ def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: in
             s=4,
             c=[colors[c]],
             rasterized=True,
-            alpha=0.9,
+            alpha=0.65,
             label=c,
         )
     ax.set_title(title)
@@ -404,7 +420,7 @@ def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: in
             bbox_to_anchor=(1.02, 0.5),
             fontsize=7,
             frameon=False,
-            title=color_key,
+            title=title,
         )
         fig.tight_layout(rect=(0, 0, 0.78, 1))
     else:
@@ -543,8 +559,8 @@ def annotate_dataset(
             _save_umap_png(
                 adata,
                 ckey,
-                figures_dir_p / path.stem / f"umap_{ckey}.png",
-                title=f"{path.stem} | {ckey}",
+                figures_dir_p / f"{path.stem}_umap_{ckey}.png",
+                title=_plot_title_for_obs_key(ckey),
                 dpi=dpi,
             )
 
@@ -569,8 +585,12 @@ def annotate_dataset(
         cols = _map_levels_to_obs(
             adata, cluster_key=ckey, assignments=assignments, resolution=resolution
         )
-        # UMAPs for label columns only (skip Level_latest score plots).
-        plot_cols = [c for c in cols if not str(c).endswith("_score")]
+        # Plot Leiden + Level_1/2/3 only (no Level_latest, no score columns).
+        plot_cols = [
+            c
+            for c in cols
+            if not str(c).endswith("_score") and not str(c).startswith("Level_latest_")
+        ]
         logger.info("  Added annotation columns: %s", ", ".join(cols))
 
         if save_plots:
@@ -578,8 +598,8 @@ def annotate_dataset(
                 _save_umap_png(
                     adata,
                     col,
-                    figures_dir_p / path.stem / f"umap_{col}.png",
-                    title=f"{path.stem} | {col}",
+                    figures_dir_p / f"{path.stem}_umap_{col}.png",
+                    title=_plot_title_for_obs_key(col),
                     dpi=dpi,
                 )
 
