@@ -36,9 +36,11 @@ the QC R script. There are no separate harmonize/qc CLIs.
 ```bash
 conda env create -f conda/environment_harmonize.yaml
 conda env create -f conda/environment_qc.yaml
-conda env create -f conda/environment_annotation.yaml
 conda activate hkoca_harmonize
 pip install -e .
+# Snapseed (annotation) is installed from https://github.com/hassansaei/snapseed
+# via environment_harmonize.yaml. To refresh only Snapseed later:
+#   pip install -U git+https://github.com/hassansaei/snapseed.git
 ```
 
 `hkoca qc-filter` runs harmonization in the active env, then automatically
@@ -99,8 +101,12 @@ Outputs are written under `--output`:
 
 ### Annotation (Snapseed)
 
+Uses the same Python stack as harmonize (`hkoca_harmonize`), with
+[hassansaei/snapseed](https://github.com/hassansaei/snapseed) installed from GitHub
+(not PyPI).
+
 ```bash
-conda activate hkoca_annotation
+conda activate hkoca_harmonize
 pip install -e .
 
 # Editable copy of the packaged marker hierarchy

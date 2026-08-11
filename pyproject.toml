@@ -41,7 +41,9 @@ annotation = [
   "h5py",
   "matplotlib",
   "pyyaml",
-  "snapseed",
+  "numba",
+  "scikit-learn",
+  "snapseed @ git+https://github.com/hassansaei/snapseed.git",
 ]
 
 [project.scripts]

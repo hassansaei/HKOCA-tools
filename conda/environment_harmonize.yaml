@@ -19,6 +19,11 @@ dependencies:
   - matplotlib
   - seaborn
 
+  # Annotation (Snapseed) extras beyond the scanpy stack
+  - pyyaml
+  - numba
+  - scikit-learn
+
   # R bridge for --to-rds (Seurat export consumed by QC)
   - r-base>=4.2
   - r-seurat>=4.3
@@ -31,3 +36,5 @@ dependencies:
   - pip:
       - rpy2==3.6.3
       - anndata2ri==2.0
+      # Forked Snapseed used by hkoca annotation (not PyPI).
+      - git+https://github.com/hassansaei/snapseed.git
