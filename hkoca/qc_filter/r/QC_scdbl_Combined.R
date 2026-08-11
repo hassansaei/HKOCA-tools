@@ -212,9 +212,12 @@ set.seed(1234)
         }
     }
 
-    # 3. FALLBACK: default methods for datasets already discovered by the caller
+    # 3. FALLBACK: MAD defaults (log1p MAD for nFeature/nCount; raw MAD for mito)
     if (is.null(qc_decisions)) {
-        log_warn("No filter criteria provided. Auto-generating defaults: lower_tri / mad3 / mito mad3.")
+        log_warn(paste(
+            "No filter criteria provided. Auto-generating mad3 defaults:",
+            "nFeature/nCount = log1p MAD (5 MADs); mito = raw MAD (3 MADs)."
+        ))
 
         basenames <- discovered_names
         if (is.null(basenames) || length(basenames) == 0) {
@@ -241,14 +244,14 @@ set.seed(1234)
 
         qc_decisions <- data.frame(
             Dataset_Name         = basenames,
-            Lower_Feature_Method = rep("lower_tri", length(basenames)),
+            Lower_Feature_Method = rep("mad3", length(basenames)),
             Upper_Feature_Method = rep("mad3", length(basenames)),
-            Lower_Count_Method   = rep("lower_tri", length(basenames)),
+            Lower_Count_Method   = rep("mad3", length(basenames)),
             Upper_Count_Method   = rep("mad3", length(basenames)),
             Upper_Mito_Method    = rep("mad3", length(basenames)),
             stringsAsFactors     = FALSE
         )
-        source_label <- "pipeline_default: lower_tri + mad3 auto-generation"
+        source_label <- "pipeline_default: mad3 (log1p library-size; raw mito)"
     }
 
     if (!("Dataset_Name" %in% colnames(qc_decisions))) {
@@ -815,7 +818,7 @@ log_info("==================================================")
 log_info(sprintf("QC PIPELINE START  [run: %s]", QC_RUN))
 log_info(sprintf("  Config       : %s", config_path))
 log_info(sprintf("  Raw RDS dir  : %s", rds_dir))
-decisions_src_display <- "pipeline_default: lower_tri + mad3 auto-generation"
+decisions_src_display <- "pipeline_default: mad3 (log1p library-size; raw mito)"
 if (!is.null(cfg$filters) && nzchar(trimws(cfg$filters))) {
     decisions_src_display <- sprintf("file: %s", trimws(cfg$filters))
 } else if (!is.null(cfg$qc_decisions_table) && nzchar(trimws(cfg$qc_decisions_table))) {
@@ -908,16 +911,55 @@ log_info("==================================================")
     as.numeric(quantile(x, probs = q, na.rm = TRUE))
 }
 
-# -- Dispatcher: method string -> numeric threshold -----------------------------
-get_thresh <- function(method_str, values, bound = "lower") {
+# -- MAD threshold (scverse / Germain-style) -----------------------------------
+# Library-size metrics (nFeature, nCount): MAD on log1p, then expm1 back.
+# Percent metrics (mito): MAD on the raw percentage (no log1p).
+# method "mad3" on feature/count uses nmads=5 (best-practice default);
+# explicit mad5/mad4/... honor the digit. Mito always uses the digit (mad3 -> 3).
+.thresh_mad <- function(values, bound = "lower", nmads = 3, use_log = FALSE) {
     values <- values[is.finite(values)]
+    if (length(values) == 0) return(if (bound == "upper") Inf else 0)
+
+    x <- if (use_log) log1p(pmax(as.numeric(values), 0)) else as.numeric(values)
+    m <- median(x, na.rm = TRUE)
+    d <- mad(x, na.rm = TRUE)
+    if (!is.finite(m)) return(if (bound == "upper") Inf else 0)
+    if (!is.finite(d) || d == 0) {
+        thresh <- m
+    } else {
+        thresh <- if (bound == "upper") m + nmads * d else m - nmads * d
+    }
+
+    if (use_log) {
+        thresh <- expm1(thresh)
+        if (bound == "lower") thresh <- max(thresh, 0)
+    }
+    as.numeric(thresh)
+}
+
+.mad_nmads <- function(method_str, metric = "generic") {
+    nmads <- suppressWarnings(as.numeric(sub("^mad", "", method_str)))
+    if (!is.finite(nmads) || nmads <= 0) nmads <- 3
+    # Plain "mad3" on library-size metrics follows scverse (5 MADs on log1p).
+    if (identical(method_str, "mad3") && metric %in% c("feature", "count")) {
+        return(5)
+    }
+    nmads
+}
+
+# -- Dispatcher: method string -> numeric threshold -----------------------------
+# metric: "feature" | "count" | "mito" | "generic"
+get_thresh <- function(method_str, values, bound = "lower", metric = "generic") {
+    values <- values[is.finite(values)]
+    method_str <- trimws(as.character(method_str))
     if (method_str == "lower_tri") return(.thresh_triangle(values, sub = "lower"))
     if (method_str == "upper_tri") return(.thresh_triangle(values, sub = "higher"))
     if (method_str == "renyi")     return(.thresh_renyi(values))
     if (method_str == "knee")      return(.thresh_knee(values))
-    if (method_str == "mad3") {
-        m <- median(values, na.rm = TRUE); d <- mad(values, na.rm = TRUE)
-        return(if (bound == "upper") m + 3 * d else m - 3 * d)
+    if (grepl("^mad[0-9]+$", method_str)) {
+        use_log <- metric %in% c("feature", "count")
+        nmads <- .mad_nmads(method_str, metric = metric)
+        return(.thresh_mad(values, bound = bound, nmads = nmads, use_log = use_log))
     }
     if (method_str == "none") return(if (bound == "upper") Inf else -Inf)
     if (grepl("^manual_", method_str)) return(as.numeric(gsub("manual_", "", method_str)))
@@ -1244,6 +1286,8 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
         filtered_path <- file.path(FILTERED_DIR, paste0(nm, "_filtered.rds"))
         current_qc_params <- as.list(row_cfg)
+        # Invalidate old raw-MAD mad3 checkpoints after log1p MAD change.
+        current_qc_params$mad_scale <- "log1p_library_raw_mito_v1"
 
         if (.should_skip_run(filtered_path, current_qc_params, cfg$force_overwrite)) {
             log_info(sprintf("[QC SKIPPED] %s already processed with identical thresholds.", nm))
@@ -1376,11 +1420,24 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
             meta_raw <- obj[[]]
 
-            feat_lower  <- get_thresh(row_cfg$Lower_Feature_Method, meta_raw$nFeature_RNA, "lower")
-            feat_upper  <- get_thresh(row_cfg$Upper_Feature_Method, meta_raw$nFeature_RNA, "upper")
-            count_lower <- get_thresh(row_cfg$Lower_Count_Method,   meta_raw$nCount_RNA,   "lower")
-            count_upper <- get_thresh(row_cfg$Upper_Count_Method,   meta_raw$nCount_RNA,   "upper")
-            mito_upper  <- get_thresh(row_cfg$Upper_Mito_Method,    meta_raw$percent.mito, "upper")
+            feat_lower  <- get_thresh(row_cfg$Lower_Feature_Method, meta_raw$nFeature_RNA, "lower", metric = "feature")
+            feat_upper  <- get_thresh(row_cfg$Upper_Feature_Method, meta_raw$nFeature_RNA, "upper", metric = "feature")
+            count_lower <- get_thresh(row_cfg$Lower_Count_Method,   meta_raw$nCount_RNA,   "lower", metric = "count")
+            count_upper <- get_thresh(row_cfg$Upper_Count_Method,   meta_raw$nCount_RNA,   "upper", metric = "count")
+            mito_upper  <- get_thresh(row_cfg$Upper_Mito_Method,    meta_raw$percent.mito, "upper", metric = "mito")
+
+            # Hard floors (same idea as Seurat min.features); never raise upper bounds.
+            qc_min_features <- as.numeric(cfg$qc_min_features %||% 200)
+            qc_min_counts   <- as.numeric(cfg$qc_min_counts   %||% 0)
+            if (is.finite(qc_min_features) && qc_min_features > 0)
+                feat_lower <- max(feat_lower, qc_min_features)
+            if (is.finite(qc_min_counts) && qc_min_counts > 0)
+                count_lower <- max(count_lower, qc_min_counts)
+
+            log_info(sprintf(
+                "  Thresholds: nFeature [%.2f, %.2f] | nCount [%.2f, %.2f] | mito <= %.2f",
+                feat_lower, feat_upper, count_lower, count_upper, mito_upper
+            ))
 
             ribo_vals  <- meta_raw$percent.ribo
             ribo_lower <- if (median(ribo_vals, na.rm = TRUE) >= 10) quantile(ribo_vals, 0.05, na.rm = TRUE) else 0

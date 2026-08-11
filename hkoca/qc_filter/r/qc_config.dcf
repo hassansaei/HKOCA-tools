@@ -38,6 +38,10 @@ dbl_min_feature: 50
 dbl_umap_dims: 20
 dbl_default_platform: 10x
 
+# QC hard floors applied after MAD / other methods (0 disables).
+qc_min_features: 200
+qc_min_counts: 0
+
 # Non-10x platform DBR defaults
 platform_dbr.dropseq: 0.049
 platform_dbr.pipseq: 0.07
