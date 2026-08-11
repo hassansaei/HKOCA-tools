@@ -1,13 +1,13 @@
 # =============================================================================
-# Single-Cell QC Pipeline — Full Integration
-# Doublet Detection (scDblFinder) → QC Filtering
+# Single-Cell QC Pipeline - Full Integration
+# Doublet Detection (scDblFinder) -> QC Filtering
 #
-# 3 stages: (1) Doublet — runs scDblFinder, saves singlet-only RDS + audit PDF
-# + summary CSV. (2) QC — applies threshold filters (nFeature/nCount/% mito),
-# saves filtered RDS + audit PDF + dashboard. (3) Summary — combined CSV/plots
+# 3 stages: (1) Doublet - runs scDblFinder, saves singlet-only RDS + audit PDF
+# + summary CSV. (2) QC - applies threshold filters (nFeature/nCount/% mito),
+# saves filtered RDS + audit PDF + dashboard. (3) Summary - combined CSV/plots
 # across both stages.
 #
-# Config is a DCF file (qc_config.dcf) — see qc_config.dcf for all keys
+# Config is a DCF file (qc_config.dcf) - see qc_config.dcf for all keys
 # (paths, doublet tuning, per-sample platform/chemistry/dbr overrides, etc).
 #
 # Usage:
@@ -16,9 +16,9 @@
 # Run with --help for the full list of CLI flags.
 # =============================================================================
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 0 — Package Loading
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 0 - Package Loading
+# ==============================================================================
 
 load_packages_safely <- function() {
     required_packages <- c(
@@ -68,11 +68,11 @@ tryCatch({
 
 set.seed(1234)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — Shared Runtime Utilities
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 1 - Shared Runtime Utilities
+# ==============================================================================
 
-# ── 1.1 Script directory ──────────────────────────────────────────────────────
+# -- 1.1 Script directory ------------------------------------------------------
 .get_script_dir <- function() {
     cmd      <- commandArgs(trailingOnly = FALSE)
     file_arg <- grep("^--file=", cmd, value = TRUE)
@@ -81,7 +81,7 @@ set.seed(1234)
     getwd()
 }
 
-# ── 1.2 CLI argument parser ───────────────────────────────────────────────────
+# -- 1.2 CLI argument parser ---------------------------------------------------
 .parse_cli_args <- function(args) {
     out <- list(); i <- 1L
     while (i <= length(args)) {
@@ -101,7 +101,7 @@ set.seed(1234)
     out
 }
 
-# ── 1.3 Type coercions ────────────────────────────────────────────────────────
+# -- 1.3 Type coercions --------------------------------------------------------
 .as_bool <- function(x, default = FALSE) {
     if (is.null(x) || length(x) == 0 || is.na(x) || x == "") return(default)
     tolower(as.character(x)) %in% c("1", "true", "t", "yes", "y")
@@ -118,7 +118,7 @@ set.seed(1234)
     if (is.na(v)) default else v
 }
 
-# ── 1.4 Path resolution ───────────────────────────────────────────────────────
+# -- 1.4 Path resolution -------------------------------------------------------
 .resolve_path <- function(path_value, base_dir = getwd()) {
     if (is.null(path_value) || path_value == "") return(path_value)
     if (grepl("^~",             path_value)) path_value <- path.expand(path_value)
@@ -127,8 +127,8 @@ set.seed(1234)
     normalizePath(file.path(base_dir, path_value), mustWork = FALSE)
 }
 
-# ── 1.5 DCF config reader ─────────────────────────────────────────────────────
-# Lenient DCF parser — handles multiline values and embedded CSV blocks.
+# -- 1.5 DCF config reader -----------------------------------------------------
+# Lenient DCF parser - handles multiline values and embedded CSV blocks.
 .read_config_dcf <- function(config_path) {
     if (!file.exists(config_path))
         stop(sprintf("Config file not found: %s", config_path))
@@ -173,10 +173,10 @@ set.seed(1234)
     cfg
 }
 
-# ── 1.6 Null-coalesce operator ────────────────────────────────────────────────
+# -- 1.6 Null-coalesce operator ------------------------------------------------
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-# ── 1.7 QC decisions loader ───────────────────────────────────────────────────
+# -- 1.7 QC decisions loader ---------------------------------------------------
 .load_qc_decisions <- function(cfg, discovered_names = NULL) {
     qc_decisions <- NULL
     source_label <- NULL
@@ -266,7 +266,7 @@ set.seed(1234)
     list(data = qc_decisions, source = source_label)
 }
 
-# ── 1.8 Logger ────────────────────────────────────────────────────────────────
+# -- 1.8 Logger ----------------------------------------------------------------
 .LOG_FILE <- NULL
 
 .init_logger <- function(log_file_path) {
@@ -287,7 +287,7 @@ log_info  <- function(...) .log_message("INFO",  ...)
 log_warn  <- function(...) .log_message("WARN",  ...)
 log_error <- function(...) .log_message("ERROR", ...)
 
-# ── 1.9 RDS file discovery ────────────────────────────────────────────────────
+# -- 1.9 RDS file discovery ----------------------------------------------------
 discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE) {
     if (!dir.exists(root_dir))
         stop(sprintf("RDS directory does not exist: %s", root_dir))
@@ -302,7 +302,7 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     for (fp in sort(paths)) {
         key <- sub(pattern, "", basename(fp), ignore.case = TRUE)
         if (!is.null(mapping[[key]])) {
-            log_warn(sprintf("Duplicate key '%s' — keeping first, skipping: %s", key, fp))
+            log_warn(sprintf("Duplicate key '%s' - keeping first, skipping: %s", key, fp))
             next
         }
         mapping[[key]] <- normalizePath(fp, mustWork = FALSE)
@@ -310,7 +310,7 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     mapping
 }
 
-# Harmonize writes <output_root>/<study>/rds/*_harmonized.rds — search recursively
+# Harmonize writes <output_root>/<study>/rds/*_harmonized.rds - search recursively
 # from output_root. Stage output dirs (doublet_filtered_rds, etc.) are flat.
 .is_harmonized_rds_root <- function(input_dir) {
     identical(
@@ -344,7 +344,7 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     s
 }
 
-# ── 1.10 Usage printer ────────────────────────────────────────────────────────
+# -- 1.10 Usage printer --------------------------------------------------------
 .print_usage <- function(default_config) {
     args <- commandArgs(trailingOnly = FALSE)
     file_arg_idx <- grep("^--file=", args)
@@ -371,7 +371,7 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     cat("  --help                   Show this message\n")
 }
 
-# ── 1.11 Parameter Metadata Checkpointing ────────────────────────────────────
+# -- 1.11 Parameter Metadata Checkpointing ------------------------------------
 # Tracks params in a hidden .meta.json so we skip re-running unless they change.
 .get_meta_path <- function(target_rds) {
     file.path(dirname(target_rds), paste0(".", basename(target_rds), ".meta.json"))
@@ -400,7 +400,7 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     jsonlite::write_json(meta_data, meta_path, auto_unbox = TRUE, pretty = TRUE)
 }
 
-# ── 1.12 10x multiplet-rate tables ───────────────────────────────────────────
+# -- 1.12 10x multiplet-rate tables -------------------------------------------
 # Approximate published values; DBR is interpolated piecewise-linearly from
 # post-ghost-filter cell count (with edge-slope extrapolation beyond range).
 #
@@ -409,7 +409,7 @@ DBL_10X_V3_TABLE_LOADED    <- c(800, 1600, 3200, 4800, 6400, 8000, 9600, 11200, 
 DBL_10X_V3_TABLE_RECOVERED <- c(500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000)
 DBL_10X_V3_TABLE_DBR       <- c(0.004, 0.008, 0.016, 0.023, 0.031, 0.039, 0.046, 0.054, 0.061, 0.069, 0.076)
 #
-# v4 chemistry (CG000731 Rev A — ~0.58x v3 multiplet rate):
+# v4 chemistry (CG000731 Rev A - ~0.58x v3 multiplet rate):
 DBL_10X_V4_TABLE_LOADED    <- c(725, 1450, 2900, 4350, 5800, 7250, 8700, 10150, 11600, 13050,
                                  14500, 15950, 17400, 18850, 20300, 21750, 23200, 24650, 26100, 27550, 29000)
 DBL_10X_V4_TABLE_RECOVERED <- c(500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000,
@@ -484,7 +484,7 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
 }
 
 # Parse sc_protocol metadata string into normalised platform + chemistry.
-# e.g. "10x_3_v3.1" → (10x, v3), "10X_5" → (10x, 5p), "Dropseq" → (dropseq, NA)
+# e.g. "10x_3_v3.1" -> (10x, v3), "10X_5" -> (10x, 5p), "Dropseq" -> (dropseq, NA)
 .parse_sc_protocol <- function(protocol_string) {
     s <- tolower(trimws(protocol_string))
 
@@ -515,7 +515,7 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
     list(platform = s, chemistry = NA_character_)
 }
 
-# ── 1.13 Small-sample guards for doublet stage ──────────────────────────────
+# -- 1.13 Small-sample guards for doublet stage ------------------------------
 .make_all_singlet_calls <- function(cell_names, score_value = 0) {
     n_cells <- length(cell_names)
     list(
@@ -631,7 +631,7 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
 .run_scdblfinder_safe <- function(sce, label, dbr = NULL, samples = NULL) {
     viability <- .check_scdblfinder_input(sce)
     if (!viability$ok) {
-        log_warn(sprintf("  %s: %s — marking all %d cells as singlets.",
+        log_warn(sprintf("  %s: %s - marking all %d cells as singlets.",
                          label, viability$reason, ncol(sce)))
         singlet_calls <- .make_all_singlet_calls(colnames(sce))
         sce$scDblFinder.class <- singlet_calls$class
@@ -649,7 +649,7 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
         }
         list(sce = sce_out, fallback = FALSE, reason = NULL)
     }, error = function(e) {
-        log_warn(sprintf("  %s: scDblFinder failed (%s) — marking all %d cells as singlets.",
+        log_warn(sprintf("  %s: scDblFinder failed (%s) - marking all %d cells as singlets.",
                          label, conditionMessage(e), ncol(sce)))
         singlet_calls <- .make_all_singlet_calls(colnames(sce))
         sce$scDblFinder.class <- singlet_calls$class
@@ -658,7 +658,7 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
     })
 }
 
-# ── 1.14 Data-driven ambiguous zone detection ─────────────────────────────────
+# -- 1.14 Data-driven ambiguous zone detection ---------------------------------
 # Finds where singlet/doublet KDE curves overlap (each normalised to its own
 # peak). Returns list(lo, hi, method); (NA, NA, "NONE") if no overlap.
 .compute_overlap_zone <- function(scores, classes,
@@ -699,9 +699,9 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
          method = sprintf("KDE_OVERLAP(min_frac=%.3f,n=%d)", min_overlap_frac, kde_n))
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — Configuration & Path Setup
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 2 - Configuration & Path Setup
+# ==============================================================================
 
 if (sys.nframe() == 0L || !exists(".read_config_dcf")) {
     script_dir     <- .get_script_dir()
@@ -726,7 +726,7 @@ if (!QC_RUN %in% c("all", "qc", "doublet"))
 RUN_QC      <- QC_RUN %in% c("all", "qc")
 RUN_DOUBLET <- QC_RUN %in% c("all", "doublet")
 
-# ── Resolve all paths ─────────────────────────────────────────────────────────
+# -- Resolve all paths ---------------------------------------------------------
 rds_dir         <- .resolve_path(cfg$rds_dir       %||% NULL,             getwd())
 BASE_OUT_DIR    <- .resolve_path(cfg$output_dir    %||% NULL,                  getwd())
 
@@ -753,7 +753,7 @@ log_file_path <- if (grepl("^(/|[A-Za-z]:)", log_candidate)) {
     normalizePath(file.path(BASE_OUT_DIR, log_candidate), mustWork = FALSE)
 }
 
-# ── scDblFinder tuning parameters ────────────────────────────────────────────
+# -- scDblFinder tuning parameters --------------------------------------------
 DBL_BATCH_COL      <- cfg$dbl_batch_col      %||% "sample_id"
 DBL_MIN_COUNT      <- as.integer(cfg$dbl_min_count   %||% 100)
 DBL_MIN_FEATURE    <- as.integer(cfg$dbl_min_feature %||% 50)
@@ -763,13 +763,13 @@ DBL_DEFAULT_CHEMISTRY <- tolower(cfg$dbl_default_chemistry %||% "v3")
 DBL_MIN_CELLS_RUN  <- as.integer(cfg$dbl_min_cells_run %||% 25)
 DBL_MIN_CELLS      <- DBL_MIN_CELLS_RUN
 
-# ── Ambiguous doublet zone ────────────────────────────────────────────────────
+# -- Ambiguous doublet zone ----------------------------------------------------
 # Spans where singlet/doublet KDE curves overlap, per sample. Set
 # dbl_ambiguous_min_overlap = 1.0 for pure binary mode (no ambiguous cells).
 DBL_AMBIGUOUS_MIN_OVERLAP <- .as_num(cfg$dbl_ambiguous_min_overlap %||% "0.05", 0.05)
 DBL_AMBIGUOUS_KDE_N       <- as.integer(cfg$dbl_ambiguous_kde_n     %||% "512")
 
-# ── Per-sample DBR config ──────────────────────────────────────────────────────
+# -- Per-sample DBR config ------------------------------------------------------
 # From DCF keys like sample.<name>.platform / .chemistry / .dbr
 DBL_SAMPLE_CFG <- list()
 sample_keys    <- grep("^sample\\.", names(cfg), value = TRUE)
@@ -783,7 +783,7 @@ for (sk in sample_keys) {
     DBL_SAMPLE_CFG[[sname]][[field]] <- cfg[[sk]]
 }
 
-# ── Platform-specific DBR defaults (non-10x) ─────────────────────────────────
+# -- Platform-specific DBR defaults (non-10x) ---------------------------------
 # DCF keys: platform_dbr.<platform>: <fraction>
 DBL_PLATFORM_DBR  <- list()
 pdbr_keys         <- grep("^platform_dbr\\.", names(cfg), value = TRUE)
@@ -792,26 +792,26 @@ for (pk in pdbr_keys) {
     DBL_PLATFORM_DBR[[pname]] <- as.numeric(cfg[[pk]])
 }
 
-# ── Plotting parameters ──────────────────────────────────────────────────────
+# -- Plotting parameters ------------------------------------------------------
 PLOT_DPI    <- .as_num(cfg$plot_dpi %||% "300", 300)
 PLOT_BG     <- trimws(cfg$plot_bg %||% "white")
 PLOT_WIDTH  <- .as_num(cfg$plot_base_width %||% "6", 6)
 PLOT_HEIGHT <- .as_num(cfg$plot_base_height %||% "5", 5)
 
-# ── Discovery settings ────────────────────────────────────────────────────────
+# -- Discovery settings --------------------------------------------------------
 rds_pattern         <- cfg$rds_pattern         %||% "\\.rds$"
 recursive_discovery <- .as_bool(cfg$recursive_discovery %||% "FALSE", FALSE)
 
-# ── Create output directories ─────────────────────────────────────────────────
+# -- Create output directories -------------------------------------------------
 for (d in c(QC_DIR, FILTERED_DIR, DOUBLET_DIR, DOUBLET_SUMMARY_DIR, INTEGRATED_SUMMARY_DIR, dirname(log_file_path)))
     dir.create(d, recursive = TRUE, showWarnings = FALSE)
 
 if (RUN_H5AD) dir.create(H5AD_DIR, recursive = TRUE, showWarnings = FALSE)
-# ── Initialise shared logger ──────────────────────────────────────────────────
+# -- Initialise shared logger --------------------------------------------------
 .init_logger(log_file_path)
 run_ts <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
-log_info("══════════════════════════════════════════════════")
+log_info("==================================================")
 log_info(sprintf("QC PIPELINE START  [run: %s]", QC_RUN))
 log_info(sprintf("  Config       : %s", config_path))
 log_info(sprintf("  Raw RDS dir  : %s", rds_dir))
@@ -824,13 +824,13 @@ if (!is.null(cfg$filters) && nzchar(trimws(cfg$filters))) {
 log_info(sprintf("  Decisions src: %s", decisions_src_display))
 log_info(sprintf("  Output base  : %s", BASE_OUT_DIR))
 log_info(sprintf("  Log file     : %s", log_file_path))
-log_info("══════════════════════════════════════════════════")
+log_info("==================================================")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — Threshold Algorithm Implementations
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 3 - Threshold Algorithm Implementations
+# ==============================================================================
 
-# ── Triangle threshold ────────────────────────────────────────────────────────
+# -- Triangle threshold --------------------------------------------------------
 # Picks the bin farthest from the peak-to-endpoint line.
 .thresh_triangle <- function(x, sub = "higher", bins = 256) {
     x <- x[is.finite(x)]
@@ -850,14 +850,14 @@ log_info("═══════════════════════�
     distances <- abs(
         (y2 - y1) * seq_along(counts) -
         (x2 - x1) * counts +
-         x2 * y1  -  y2 * x1
+         x2 * y1 -  y2 * x1
     ) / sqrt((y2 - y1)^2 + (x2 - x1)^2)
 
     search_range <- if (sub == "higher") seq(peak_idx, length(counts)) else seq(1L, peak_idx)
     mids[search_range[which.max(distances[search_range])]]
 }
 
-# ── Rényi entropy threshold ───────────────────────────────────────────────────
+# -- Rényi entropy threshold ---------------------------------------------------
 .thresh_renyi <- function(x, bins = 256) {
     x <- x[is.finite(x)]
     if (length(x) == 0) return(0)
@@ -882,7 +882,7 @@ log_info("═══════════════════════�
     best_thresh
 }
 
-# ── KneePoint (Kneedle) threshold ────────────────────────────────────────────
+# -- KneePoint (Kneedle) threshold --------------------------------------------
 .thresh_knee <- function(x, use_log = TRUE) {
     x <- x[is.finite(x)]
     if (length(x) == 0) return(0)
@@ -901,14 +901,14 @@ log_info("═══════════════════════�
     x_sorted[which.max((x_norm + y_norm - 1) / sqrt(2))]
 }
 
-# ── Quantile threshold ────────────────────────────────────────────────────────
+# -- Quantile threshold --------------------------------------------------------
 .thresh_quantile <- function(x, q) {
     x <- x[is.finite(x)]
     if (length(x) == 0) return(0)
     as.numeric(quantile(x, probs = q, na.rm = TRUE))
 }
 
-# ── Dispatcher: method string → numeric threshold ─────────────────────────────
+# -- Dispatcher: method string -> numeric threshold -----------------------------
 get_thresh <- function(method_str, values, bound = "lower") {
     values <- values[is.finite(values)]
     if (method_str == "lower_tri") return(.thresh_triangle(values, sub = "lower"))
@@ -924,9 +924,9 @@ get_thresh <- function(method_str, values, bound = "lower") {
     ifelse(bound == "upper", Inf, -Inf)
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — QC Plot Builders
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 4 - QC Plot Builders
+# ==============================================================================
 
 # 2-D kernel density for scatter point colouring.
 point_density <- function(x, y, n = 200) {
@@ -1120,7 +1120,7 @@ make_scatter_facet <- function(x, y, group, x_label, y_label, title,
     NULL
 }
 
-# ── Audit density (PDF before/after pages) ───────────────────────────────────
+# -- Audit density (PDF before/after pages) -----------------------------------
 plot_dist <- function(meta, col_name, title, lower_val, upper_val,
                       is_log = TRUE, fill_color = "steelblue") {
     p <- ggplot(meta, aes(x = if (is_log) log1p(.data[[col_name]]) else .data[[col_name]])) +
@@ -1143,15 +1143,15 @@ s_median <- function(x) round(median(as.numeric(x), na.rm = TRUE), 2)
 s_mean   <- function(x) round(mean(as.numeric(x),   na.rm = TRUE), 2)
 s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — STAGE 2: QC Filtering
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 5 - STAGE 2: QC Filtering
+# ==============================================================================
 
 .run_stage_qc <- function(qc_input_dir = rds_dir) {
 
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
     log_info("STAGE 2: QC FILTERING")
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
 
     rds_file_map <- .discover_input_rds(qc_input_dir)
     sample_names <- sort(names(rds_file_map))
@@ -1239,7 +1239,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         row_cfg  <- lapply(row_cfg, function(x) trimws(as.character(x)))
 
         if (is.null(rds_path) || !file.exists(rds_path)) {
-            log_warn(sprintf("[MISSING] %s — not found in discovered RDS files", nm)); next
+            log_warn(sprintf("[MISSING] %s - not found in discovered RDS files", nm)); next
         }
 
         filtered_path <- file.path(FILTERED_DIR, paste0(nm, "_filtered.rds"))
@@ -1259,7 +1259,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                     obj <- readRDS(rds_path)
                     cells_raw <- ncol(obj)
                     rm(obj); gc()
-                    log_info(sprintf("  Resume: metadata cache miss — loaded raw RDS for cells_raw=%d.", cells_raw))
+                    log_info(sprintf("  Resume: metadata cache miss - loaded raw RDS for cells_raw=%d.", cells_raw))
                 }
 
                 summary_list[[length(summary_list) + 1]] <- data.frame(
@@ -1403,7 +1403,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                                   min(meta_raw$nFeature_RNA), max(meta_raw$nFeature_RNA),
                                   min(meta_raw$nCount_RNA),   max(meta_raw$nCount_RNA),
                                   min(meta_raw$percent.mito), max(meta_raw$percent.mito)))
-                log_error("  → Review qc_decisions_table thresholds for this dataset.")
+                log_error("  -> Review qc_decisions_table thresholds for this dataset.")
                 rm(obj); gc()
                 next
             }
@@ -1489,14 +1489,14 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                            p.s.f.bs, width = scatter_facet_w,  height = scatter_facet_h, dpi = PLOT_DPI, bg = PLOT_BG)
                 }           
             }
-            log_info(sprintf("  PNGs: %d files → %s%s",
+            log_info(sprintf("  PNGs: %d files -> %s%s",
                              if (emit_per_sample) 32L else 16L,
                              file.path(QC_DIR, nm),
                              if (emit_per_sample)
                                  sprintf("  (per-sample plots split by '%s', %d samples)",
                                          qc_group_col, n_qc_groups)
                              else
-                                 "  (single-sample dataset — no per-sample split)"))
+                                 "  (single-sample dataset - no per-sample split)"))
 
             p1_b <- plot_dist(meta_raw, "nFeature_RNA", paste("Raw nFeature:", nm), feat_lower,  feat_upper,  TRUE,  "lightblue")
             p2_b <- plot_dist(meta_raw, "nCount_RNA",   paste("Raw nCount:",   nm), count_lower, count_upper, TRUE,  "lightgreen")
@@ -1526,8 +1526,8 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                               else if (inflation < 1.05) " \u26a0 CHECK: very light filtering"
                               else ""
             log_info(sprintf("  Saved  : %s", filtered_path))
-            log_info(sprintf("  Cells  : %d \u2192 %d  (%.1f%% removed)", cells_raw, cells_filtered, pct_removed))
-            log_info(sprintf("  nCount : median %g \u2192 %g  [inflation %.2fx]%s",
+            log_info(sprintf("  Cells  : %d -> %d  (%.1f%% removed)", cells_raw, cells_filtered, pct_removed))
+            log_info(sprintf("  nCount : median %g -> %g  [inflation %.2fx]%s",
                              s_median(obj$nCount_RNA), s_median(fobj$nCount_RNA),
                              inflation, inflation_flag))
 
@@ -1602,18 +1602,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     tryCatch(dev.off(), error = function(e) log_warn(paste("PDF device close:", conditionMessage(e))))
     log_info(sprintf("QC audit PDF saved: %s", qc_pdf_path))
 
-    log_info("=== QC Summary ===")
-    if (nrow(summary_table) > 0) {
-        print_cols <- intersect(
-            c("sample", "algo_nCount_lower", "median_inflation_ratio",
-              "cells_raw", "cells_filtered", "pct_cells_removed",
-              "cutoff_nCount_lower", "cutoff_nCount_upper",
-              "median_nCount_raw",   "median_nCount_filtered",
-              "median_pct_mito_raw", "median_pct_mito_filtered"),
-            colnames(summary_table)
-        )
-        for (ln in capture.output(print(summary_table[, print_cols], row.names = FALSE))) log_info(ln)
-    } else {
+    if (nrow(summary_table) == 0) {
         log_warn("No datasets processed.")
     }
 
@@ -1622,9 +1611,9 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     log_info(sprintf("Full summary (%d rows, %d columns) saved: %s",
                      nrow(summary_table), ncol(summary_table), qc_summary_csv))
 
-    # ── Full QC Dashboard ─────────────────────────────────────────────────────
+    # -- Full QC Dashboard -----------------------------------------------------
     if (nrow(summary_table) == 0) {
-        log_warn("Summary table empty — skipping dashboard.")
+        log_warn("Summary table empty - skipping dashboard.")
     } else {
 
         plot_data <- summary_table[summary_table$sample != "TOTAL", ]
@@ -1709,7 +1698,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             theme_minimal() +
             theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom")
 
-        # Ridge plots — reload raw + filtered RDS for per-dataset distributions
+        # Ridge plots - reload raw + filtered RDS for per-dataset distributions
         dist_df_list <- list()
         for (nm in configured_datasets) {
             raw_path  <- rds_file_map[[nm]]
@@ -1832,17 +1821,17 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — STAGE 1: Doublet Detection (scDblFinder)
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 6 - STAGE 1: Doublet Detection (scDblFinder)
+# ==============================================================================
 
 .run_stage_doublet <- function(doublet_input_dir = FILTERED_DIR) {
 
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
     log_info("STAGE 1: DOUBLET DETECTION")
     log_info(sprintf("  Input  : %s", doublet_input_dir))
     log_info(sprintf("  Output : %s", DOUBLET_DIR))
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
 
     rds_map <- .discover_input_rds(doublet_input_dir)
     filtered_files <- unname(unlist(rds_map))
@@ -1897,7 +1886,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             file.exists(singlets_path) && file.info(singlets_path)$size > 0 &&
             !file.exists(.get_meta_path(singlets_path))) {
             skip_doublet <- TRUE
-            log_info(sprintf("  [COMPAT] No .meta.json for %s — skipping via legacy file-existence check.", sample_nm))
+            log_info(sprintf("  [COMPAT] No .meta.json for %s - skipping via legacy file-existence check.", sample_nm))
         }
         if (skip_doublet) {
             log_info(sprintf("[DOUBLET SKIPPED] %s already processed with identical parameters.", sample_nm))
@@ -1955,11 +1944,11 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         n_before <- ncol(obj)
         obj      <- subset(obj, subset = nCount_RNA > DBL_MIN_COUNT & nFeature_RNA > DBL_MIN_FEATURE)
         n_after_ghost <- ncol(obj)
-        log_info(sprintf("  Ghost-cell filter: %d \u2192 %d cells", n_before, n_after_ghost))
+        log_info(sprintf("  Ghost-cell filter: %d -> %d cells", n_before, n_after_ghost))
         raw_cell_counts[[sample_nm]] <- n_before
 
         if (n_after_ghost == 0) {
-            log_warn(sprintf("  No cells remain after ghost-cell filtering for '%s' — skipping sample.", sample_nm))
+            log_warn(sprintf("  No cells remain after ghost-cell filtering for '%s' - skipping sample.", sample_nm))
             dbl_summary_stats[[sample_nm]] <- data.frame(
                 Sample              = sample_nm,
                 Total_Cells         = 0,
@@ -1996,7 +1985,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         fallback_reason <- NULL
 
         if (!run_doublet_detection) {
-            log_warn(sprintf("  %s — scDblFinder will be skipped and all remaining cells will be marked as singlets.",
+            log_warn(sprintf("  %s - scDblFinder will be skipped and all remaining cells will be marked as singlets.",
                              viability$reason))
         }
 
@@ -2007,7 +1996,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         }
         has_batch <- length(batch_levels_meta) > 1
 
-        # ── Resolve platform, chemistry, and DBR ──────────────────────────────
+        # -- Resolve platform, chemistry, and DBR ------------------------------
         # Priority: per-sample config > sc_protocol metadata > global defaults.
         # 10x DBR comes from the chemistry multiplet table; non-10x uses
         # DBL_PLATFORM_DBR. Missing values never stop the run.
@@ -2030,7 +2019,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             } else if (length(proto_vals) > 1L) {
                 proto_raw <- "MULTIPLE"
                 log_info(sprintf(
-                    "  Multiple sc_protocol values for '%s': %s — will resolve dynamically per batch.",
+                    "  Multiple sc_protocol values for '%s': %s - will resolve dynamically per batch.",
                     sample_nm, paste(proto_vals, collapse = ", ")))
 
                 # If no batching is currently configured, force it to split by sc_protocol
@@ -2059,7 +2048,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             dbr_source <- "SC_PROTOCOL_AUTO_PER_BATCH"
         } else if (run_doublet_detection) {
             log_warn(sprintf(
-                "  No sc_protocol metadata for '%s' — using global defaults (platform=%s, chemistry=%s)",
+                "  No sc_protocol metadata for '%s' - using global defaults (platform=%s, chemistry=%s)",
                 sample_nm, platform, chemistry))
         }
 
@@ -2078,7 +2067,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
         if (run_doublet_detection && platform == "10x" && !chemistry %in% c("v2", "v3", "v4", "5p")) {
             log_warn(sprintf(
-                "  Unknown 10x chemistry '%s' for '%s' — defaulting to v3",
+                "  Unknown 10x chemistry '%s' for '%s' - defaulting to v3",
                 chemistry, sample_nm))
             chemistry <- "v3"
         }
@@ -2096,7 +2085,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                     dbr <- dbr_user; dbr_source <- "USER_OVERRIDE_10X"
                 } else {
                     log_warn(sprintf(
-                        "  Invalid DBR %.4f for '%s' (must be in (0, 0.30]) — falling back to AUTO",
+                        "  Invalid DBR %.4f for '%s' (must be in (0, 0.30]) - falling back to AUTO",
                         dbr_user, sample_nm))
                 }
             } else if (has_batch) {
@@ -2112,7 +2101,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                 } else {
                     dbr_source <- "AUTO_10X_FALLBACK"
                     log_warn(sprintf(
-                        "  Could not estimate 10x %s table DBR for '%s' from %d cells — scDblFinder auto",
+                        "  Could not estimate 10x %s table DBR for '%s' from %d cells - scDblFinder auto",
                         chemistry, sample_nm, cells_count_for_dbr))
                 }
             }
@@ -2125,7 +2114,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                 log_info(sprintf("  Using platform default DBR=%.4f for %s", dbr, platform))
             } else {
                 log_warn(sprintf(
-                    "  Platform '%s' for '%s' has no default DBR — falling back to 10x AUTO",
+                    "  Platform '%s' for '%s' has no default DBR - falling back to 10x AUTO",
                     platform, sample_nm))
                 cells_count_for_dbr <- ncol(obj)
                 est_dbr <- .estimate_10x_dbr_by_chemistry(cells_count_for_dbr, chemistry)
@@ -2188,7 +2177,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                 has_small_batches <- any(batch_counts < DBL_MIN_CELLS)
 
                 if (platform == "10x" && is.na(dbr_user)) {
-                    log_info(sprintf("  [BATCH MODE] %d internal samples — estimating DBR per batch.", n_sub))
+                    log_info(sprintf("  [BATCH MODE] %d internal samples - estimating DBR per batch.", n_sub))
 
                     class_results <- setNames(rep(NA_character_, ncol(sce)), colnames(sce))
                     score_results <- setNames(rep(NA_real_, ncol(sce)), colnames(sce))
@@ -2221,7 +2210,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                             log_info(sprintf("    [BATCH:%s] chemistry=%s | cells=%d | DBR=%.4f", 
                                              batch_nm, batch_chem, sub_n, sub_dbr))
                         } else {
-                            log_warn(sprintf("    [BATCH:%s] could not estimate 10x %s DBR from %d filtered cells — using scDblFinder auto",
+                            log_warn(sprintf("    [BATCH:%s] could not estimate 10x %s DBR from %d filtered cells - using scDblFinder auto",
                                              batch_nm, batch_chem, sub_n))
                         }
 
@@ -2259,7 +2248,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                         dbr_source <- "AUTO_10X_FALLBACK"
                     }
                 } else if (has_small_batches) {
-                    log_warn(sprintf("  [BATCH MODE] At least one internal sample has < %d cells — processing batches independently with fallback singlet calls for undersized batches.",
+                    log_warn(sprintf("  [BATCH MODE] At least one internal sample has < %d cells - processing batches independently with fallback singlet calls for undersized batches.",
                                      DBL_MIN_CELLS))
 
                     class_results <- setNames(rep(NA_character_, ncol(sce)), colnames(sce))
@@ -2282,7 +2271,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                         score_results[colnames(sub_sce)] <- as.numeric(sub_sce$scDblFinder.score)
                     }
                 } else {
-                    log_info(sprintf("  [BATCH MODE] %d internal samples — processing independently.", n_sub))
+                    log_info(sprintf("  [BATCH MODE] %d internal samples - processing independently.", n_sub))
                     batch_result <- .run_scdblfinder_safe(sce, label = "[BATCH MODE]", dbr = dbr, samples = DBL_BATCH_COL)
                     sce <- batch_result$sce
                     used_singlet_fallback <- used_singlet_fallback || isTRUE(batch_result$fallback)
@@ -2294,7 +2283,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                     names(class_results) <- names(score_results) <- colnames(sce)
                 }
             } else {
-                log_info("  [SINGLE MODE] No internal batching — running standard mode.")
+                log_info("  [SINGLE MODE] No internal batching - running standard mode.")
                 single_result <- .run_scdblfinder_safe(sce, label = "[SINGLE MODE]", dbr = dbr)
                 sce <- single_result$sce
                 used_singlet_fallback <- used_singlet_fallback || isTRUE(single_result$fallback)
@@ -2313,7 +2302,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         obj$scDblFinder.class <- class_results[colnames(obj)]
         obj$scDblFinder.score <- score_results[colnames(obj)]
 
-        # ── 3-way doublet status: singlet / ambiguous / doublet ───────────────
+        # -- 3-way doublet status: singlet / ambiguous / doublet ---------------
         # Ambiguous zone derived per-sample from KDE overlap of score distributions.
         scores  <- obj$scDblFinder.score
         classes <- obj$scDblFinder.class
@@ -2343,7 +2332,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             )
         } else {
             log_info(sprintf(
-                "  Ambiguous zone: none detected (singlet/doublet distributions %s) — binary mode.",
+                "  Ambiguous zone: none detected (singlet/doublet distributions %s) - binary mode.",
                 if (overlap_zone$method == "NONE") "do not overlap above threshold"
                 else "could not be estimated"))
             doublet_status <- ifelse(
@@ -2493,7 +2482,6 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         dbl_summary_csv <- file.path(DOUBLET_SUMMARY_DIR, paste0("doublet_summary_", run_ts, ".csv"))
         write.csv(dbl_summary_df, dbl_summary_csv, row.names = FALSE)
         log_info(sprintf("Doublet summary CSV saved: %s", dbl_summary_csv))
-        print(dbl_summary_df)
     }
 
     if (length(raw_cell_counts) > 0) {
@@ -2509,15 +2497,15 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6.5 — H5AD Conversion
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 6.5 - H5AD Conversion
+# ==============================================================================
 .run_stage_h5ad <- function(input_dir, output_dir) {
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
     log_info("STAGE 3: H5AD CONVERSION")
     log_info(sprintf("  Input  : %s", input_dir))
     log_info(sprintf("  Output : %s", output_dir))
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
 
     rds_files <- list.files(input_dir, pattern = "\\.rds$", full.names = TRUE)
     if (length(rds_files) == 0) {
@@ -2569,7 +2557,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     log_info("H5AD Conversion Complete.")
 }
 
-# ── Stage execution dispatcher ─────────────────────────────────────────────────
+# -- Stage execution dispatcher -------------------------------------------------
 reverse_mode_run <- .as_bool(cfg$reverse_mode %||% "TRUE", TRUE)
 
 if (QC_RUN == "all") {
@@ -2586,7 +2574,7 @@ if (QC_RUN == "all") {
     .run_stage_doublet(doublet_input_dir = if (reverse_mode_run) rds_dir else FILTERED_DIR)
 }
 
-# ── Optional Stage: H5AD conversion ───────────────────────────────────────────
+# -- Optional Stage: H5AD conversion -------------------------------------------
 if (RUN_H5AD) {
     h5ad_input_dir <- if (QC_RUN == "qc") {
         FILTERED_DIR
@@ -2600,11 +2588,11 @@ if (RUN_H5AD) {
     .run_stage_h5ad(h5ad_input_dir, H5AD_DIR)
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 7 — Pipeline Complete
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 7 - Pipeline Complete
+# ==============================================================================
 
-log_info("══════════════════════════════════════════════════")
+log_info("==================================================")
 log_info("PIPELINE COMPLETE")
 log_info(sprintf("  QC run     : %s", QC_RUN))
 log_info(sprintf("  Output base  : %s", BASE_OUT_DIR))
@@ -2614,18 +2602,18 @@ if (RUN_QC)      log_info(sprintf("  QC summary   : %s", file.path(QC_DIR,      
 if (RUN_DOUBLET) log_info(sprintf("  Doublet PDF  : %s", file.path(DOUBLET_SUMMARY_DIR, paste0("Doublet_Audit_Report_", run_ts, ".pdf"))))
 if (RUN_DOUBLET) log_info(sprintf("  Doublet CSV  : %s", file.path(DOUBLET_SUMMARY_DIR, paste0("doublet_summary_",      run_ts, ".csv"))))
 log_info(sprintf("  Log file     : %s", log_file_path))
-log_info("══════════════════════════════════════════════════")
+log_info("==================================================")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 8 — Integrated Doublet + QC End-to-End Summary
+# ==============================================================================
+# SECTION 8 - Integrated Doublet + QC End-to-End Summary
 #
 # Writes a per-sample CSV (cells_raw/post_doublet/post_qc + % removed per
 # stage), per-plot PNGs, and a multi-page summary PDF.
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
-log_info("──────────────────────────────────────────────────")
+log_info("--------------------------------------------------")
 log_info("SECTION 8: INTEGRATED DOUBLET + QC SUMMARY")
-log_info("──────────────────────────────────────────────────")
+log_info("--------------------------------------------------")
 
 qc_csv_path  <- file.path(QC_DIR, "qc_summary_detailed.csv")
 dbl_csv_glob <- list.files(DOUBLET_SUMMARY_DIR, pattern = "^doublet_summary_.*\\.csv$", full.names = TRUE)
@@ -2657,7 +2645,7 @@ has_dbl_summary <- !is.null(dbl_csv_path) && file.exists(dbl_csv_path)
 }
 
 if (!has_qc_summary && !has_dbl_summary) {
-    log_warn("Section 8: Neither QC nor doublet summary CSVs found on disk — skipping integrated summary.")
+    log_warn("Section 8: Neither QC nor doublet summary CSVs found on disk - skipping integrated summary.")
 } else {
 
     if (has_qc_summary) {
@@ -2672,7 +2660,7 @@ if (!has_qc_summary && !has_dbl_summary) {
     }
     if (is.null(qc_sum)) {
         qc_sum <- data.frame(sample = character(0), cells_raw = integer(0), cells_filtered = integer(0))
-        log_warn("Section 8: QC summary CSV missing/unreadable — cells_raw and cells_post_qc will be NA.")
+        log_warn("Section 8: QC summary CSV missing/unreadable - cells_raw and cells_post_qc will be NA.")
     }
 
     if (has_dbl_summary) {
@@ -2685,13 +2673,13 @@ if (!has_qc_summary && !has_dbl_summary) {
     }
     if (is.null(dbl_sum)) {
         dbl_sum <- data.frame(Sample = character(0), Total_Cells = integer(0), Doublets_Found = integer(0))
-        log_warn("Section 8: Doublet summary CSV missing/unreadable — doublet columns will be NA.")
+        log_warn("Section 8: Doublet summary CSV missing/unreadable - doublet columns will be NA.")
     }
 
     reverse_mode <- .as_bool(cfg$reverse_mode %||% "TRUE", TRUE)
 
     if (reverse_mode) {
-        # Sequence: raw → ghost filter → DBR → doublet removal → QC
+        # Sequence: raw -> ghost filter -> DBR -> doublet removal -> QC
 
         # Raw counts: try cache CSV first, fall back to reading RDS files.
         rcc_cache_path <- file.path(DOUBLET_SUMMARY_DIR, "raw_cell_counts_cache.csv")
@@ -2787,7 +2775,7 @@ if (!has_qc_summary && !has_dbl_summary) {
 
         log_info("Section 8: Reverse-mode integrated sequence applied: raw -> ghost filter -> doublet -> QC")
     } else {
-        # Normal order: raw → QC → doublet
+        # Normal order: raw -> QC -> doublet
         if (has_qc_summary && nrow(qc_sum) > 0) {
             int_df <- qc_sum[, c("sample", "cells_raw", "cells_filtered")]
             colnames(int_df) <- c("sample", "cells_raw", "cells_post_qc")
@@ -2827,9 +2815,9 @@ if (!has_qc_summary && !has_dbl_summary) {
             int_df$cells_raw[fill_idx] <- int_df$cells_post_qc[fill_idx]
             log_warn(sprintf("Section 8: Filled missing cells_raw with cells_post_qc for %d sample(s)", length(fill_idx)))
         }
-        int_df$cells_removed_by_qc      <- int_df$cells_raw      - int_df$cells_post_qc
-        int_df$cells_removed_by_doublet <- int_df$cells_post_qc  - int_df$cells_post_doublet
-        int_df$cells_removed_total       <- int_df$cells_raw      - int_df$cells_post_doublet
+        int_df$cells_removed_by_qc      <- int_df$cells_raw     - int_df$cells_post_qc
+        int_df$cells_removed_by_doublet <- int_df$cells_post_qc - int_df$cells_post_doublet
+        int_df$cells_removed_total       <- int_df$cells_raw     - int_df$cells_post_doublet
         int_df$pct_removed_by_qc      <- ifelse(!is.na(int_df$cells_raw) & int_df$cells_raw > 0,
                                                 round(int_df$cells_removed_by_qc / int_df$cells_raw * 100, 2), NA_real_)
         int_df$pct_removed_by_doublet <- ifelse(!is.na(int_df$cells_raw) & int_df$cells_raw > 0,
@@ -2971,20 +2959,11 @@ if (!has_qc_summary && !has_dbl_summary) {
     write.csv(int_csv_df, int_csv_path, row.names = FALSE)
     log_info(sprintf("Integrated summary CSV saved: %s", int_csv_path))
 
-    log_info("=== Integrated QC + Doublet Summary ===")
-    print_int_cols <- c(
-        "sample", "cells_raw", "cells_after_ghost", "dbr_used", "doublets_found",
-        "ambiguous_found", "pct_doublets", "pct_ambiguous",
-        "cells_after_doublet_removal", "cells_after_qc",
-        "pct_qc_removal", "total_cells_removal", "pct_total_cells_removal"
-    )
-    for (ln in capture.output(print(int_csv_df[, print_int_cols], row.names = FALSE))) log_info(ln)
-
-    # ── Dashboard plots ───────────────────────────────────────────────────────
+    # -- Dashboard plots -------------------------------------------------------
     pd <- int_df[complete.cases(int_df[, c("cells_raw", "cells_post_qc")]), ]
 
     if (nrow(pd) == 0) {
-        log_warn("Section 8: No complete sample rows — skipping dashboard plots.")
+        log_warn("Section 8: No complete sample rows - skipping dashboard plots.")
     } else {
 
         # Plot 1: Stacked % loss per stage
@@ -3065,7 +3044,7 @@ if (!has_qc_summary && !has_dbl_summary) {
                 theme_minimal(base_size = 10)
         }
 
-        # Plot 4: Donut — cohort-level cell budget
+        # Plot 4: Donut - cohort-level cell budget
         total_qc_loss  <- sum(pd$cells_removed_by_qc,      na.rm = TRUE)
         total_dbl_loss <- sum(pd$cells_removed_by_doublet, na.rm = TRUE)
         total_retained <- if (reverse_mode) sum(pd$cells_after_qc, na.rm = TRUE) else sum(pd$cells_post_doublet, na.rm = TRUE)
@@ -3121,20 +3100,20 @@ if (!has_qc_summary && !has_dbl_summary) {
 
     }
 
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
     log_info("SECTION 8: INTEGRATED SUMMARY COMPLETE")
     log_info(sprintf("  CSV       : %s", int_csv_path))
     if (exists("int_png_dir"))  log_info(sprintf("  PNG DIR   : %s", int_png_dir))
     if (exists("int_pdf_path")) log_info(sprintf("  PDF       : %s", int_pdf_path))
-    log_info("──────────────────────────────────────────────────")
+    log_info("--------------------------------------------------")
 
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 9 — Final Pipeline Footer
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SECTION 9 - Final Pipeline Footer
+# ==============================================================================
 
-log_info("══════════════════════════════════════════════════")
+log_info("==================================================")
 log_info("ALL SECTIONS COMPLETE")
 log_info(sprintf("  QC run            : %s", QC_RUN))
 log_info(sprintf("  Output base       : %s", BASE_OUT_DIR))
@@ -3148,7 +3127,7 @@ log_info(sprintf("  Integrated CSV    : %s", file.path(INTEGRATED_SUMMARY_DIR, "
 log_info(sprintf("  Integrated PNG dir: %s", file.path(INTEGRATED_SUMMARY_DIR, "plots")))
 log_info(sprintf("  Integrated PDF    : %s", file.path(INTEGRATED_SUMMARY_DIR, "integrated_summary_plots.pdf")))
 log_info(sprintf("  Log file          : %s", log_file_path))
-log_info("══════════════════════════════════════════════════")
+log_info("==================================================")
 
 }
-log_info("══════════════════════════════════════════════════")
+log_info("==================================================")
