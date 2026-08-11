@@ -241,9 +241,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         with open(args.manual_overrides, encoding="utf-8") as fh:
             manual = json.load(fh)
 
-    logger.info("Markers     : %s", markers)
-    logger.info("Inputs      : %d file(s)", len(inputs))
-    logger.info("Output root : %s", output_root)
+    logger.info("Marker file : %s", markers)
+    logger.info("Input files : %d", len(inputs))
+    logger.info("Output dir  : %s", output_root)
     logger.info("Resolutions : %s", params["resolutions"])
 
     if manual:
@@ -285,7 +285,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             force=bool(args.force),
         )
 
-    logger.info("Finished %d annotated object(s).", len(outputs))
+    logger.info("Finished annotation for %d file(s).", len(outputs))
     return 0
 
 

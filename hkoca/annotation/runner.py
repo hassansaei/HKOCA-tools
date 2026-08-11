@@ -95,7 +95,7 @@ def _recover_unscaled_expression(adata):
     if min_val >= 0:
         return adata
 
-    logger.warning("Negative values in adata.X; attempting to restore unscaled expression.")
+    logger.warning("Negative values in expression matrix; restoring unscaled data.")
     if adata.raw is not None:
         adata = adata.raw.to_adata()
         adata.obsm.clear()
@@ -104,12 +104,12 @@ def _recover_unscaled_expression(adata):
 
     for layer in ("counts", "raw", "normalized"):
         if layer in adata.layers:
-            logger.info("Resetting adata.X from layer '%s'.", layer)
+            logger.info("Using expression layer '%s' as matrix X.", layer)
             adata.X = adata.layers[layer].copy()
             return adata
 
     raise ValueError(
-        "adata.X appears scaled (negative values) and no adata.raw / counts layer is available."
+        "Expression matrix looks scaled (negative values) and no raw / counts layer is available."
     )
 
 
@@ -118,11 +118,11 @@ def _normalize_if_needed(adata, *, target_sum: float) -> None:
 
     _, max_val = _matrix_extremes(adata.X)
     if max_val > 100:
-        logger.info("Raw-count footprint detected (max=%.1f); normalize_total + log1p.", max_val)
+        logger.info("Raw counts detected (max=%.1f); running normalize_total + log1p.", max_val)
         sc.pp.normalize_total(adata, target_sum=target_sum)
         sc.pp.log1p(adata)
     else:
-        logger.info("Matrix looks pre-normalized (max=%.1f); skipping log-norm.", max_val)
+        logger.info("Matrix looks already normalized (max=%.1f); skipping normalize_total + log1p.", max_val)
 
 
 def _prepare_embedding(
@@ -137,10 +137,10 @@ def _prepare_embedding(
 ):
     import scanpy as sc
 
-    logger.info("Selecting HVGs (n_top_genes=%d).", hvg_n_top_genes)
+    logger.info("Selecting highly variable genes (n_top_genes=%d).", hvg_n_top_genes)
     sc.pp.highly_variable_genes(adata, n_top_genes=hvg_n_top_genes, subset=False)
     n_hvg = int(adata.var["highly_variable"].sum())
-    logger.info("HVGs retained: %d", n_hvg)
+    logger.info("Highly variable genes selected: %d", n_hvg)
 
     adata_hvg = adata[:, adata.var["highly_variable"]].copy()
     sc.pp.scale(adata_hvg, max_value=scale_max_value)
@@ -185,18 +185,18 @@ def _apply_manual_overrides(
     if not manual_annotations:
         return assignments
     if not isinstance(manual_annotations, dict):
-        logger.warning("manual_annotations is not a dict; skipping overrides.")
+        logger.warning("manual_annotations must be a dictionary; skipping overrides.")
         return assignments
 
     for cluster_id, levels in manual_annotations.items():
         cid = str(cluster_id)
         if cid not in set(map(str, assignments.index)):
-            logger.warning("Cluster %s not in Snapseed assignments; skip override.", cid)
+            logger.warning("Cluster %s not found in Snapseed assignments; skipping override.", cid)
             continue
         for level_name, value in dict(levels).items():
             col = _resolve_assignment_col(assignments, str(level_name))
             if col is None:
-                logger.warning("Level '%s' not in assignments columns; skip.", level_name)
+                logger.warning("Level '%s' not found in assignment columns; skipping.", level_name)
                 continue
             assignments.loc[cid, col] = value
     return assignments
@@ -270,7 +270,7 @@ def _assignments_with_scores(
         try:
             m = _metric_frame_for_level(level_df, group_name)
         except Exception as exc:
-            logger.warning("Could not parse Snapseed metrics for %s: %s", level_key, exc)
+            logger.warning("Could not read Snapseed metrics for %s: %s", level_key, exc)
             continue
         for metric_col in ("score", "auc", "expr"):
             if metric_col not in m.columns:
@@ -488,7 +488,7 @@ def annotate_dataset(
 
     out_path = out_dir / f"{path.stem}_annotated.h5ad"
     if skip_existing and not force and out_path.is_file() and out_path.stat().st_size > 0:
-        logger.info("[SKIP] Annotated output exists: %s", out_path)
+        logger.info("Skipping existing annotated file: %s", out_path)
         return out_path
 
     if marker_dict is None:
@@ -503,7 +503,7 @@ def annotate_dataset(
     except Exception:
         pass
 
-    logger.info("Processing %s", path.name)
+    logger.info("Annotating file: %s", path.name)
     adata = sc.read_h5ad(path)
     _ensure_gene_names(adata)
     logger.info("Loaded %s cells x %s genes", f"{adata.n_obs:,}", f"{adata.n_vars:,}")
@@ -533,11 +533,11 @@ def annotate_dataset(
 
     for resolution in res_list:
         ckey = cluster_key_for(resolution)
-        logger.info("Leiden clustering resolution=%s -> %s", resolution_tag(resolution), ckey)
+        logger.info("Leiden clustering at resolution %s (column: %s)", resolution_tag(resolution), ckey)
         sc.tl.leiden(adata, resolution=resolution, key_added=ckey, random_state=seed)
         adata.obs[ckey] = adata.obs[ckey].astype(str).astype("category")
         n_clusters = int(adata.obs[ckey].nunique())
-        logger.info("  %d clusters", n_clusters)
+        logger.info("  Found %d clusters", n_clusters)
 
         if save_plots:
             _save_umap_png(
@@ -548,10 +548,10 @@ def annotate_dataset(
                 dpi=dpi,
             )
 
-        logger.info("  Wilcoxon rank_genes_groups on %s", ckey)
+        logger.info("  Running marker gene ranking (Wilcoxon) on %s", ckey)
         sc.tl.rank_genes_groups(adata, groupby=ckey, use_raw=False, method="wilcoxon", pts=True)
 
-        logger.info("  Snapseed annotate_hierarchy on %s", ckey)
+        logger.info("  Running Snapseed hierarchical annotation on %s", ckey)
         results = snapseed.annotate_hierarchy(adata, marker_dict, group_name=ckey)
         assignments = results["assignments"].copy()
         metrics_df = results["metrics"]
@@ -571,7 +571,7 @@ def annotate_dataset(
         )
         # UMAPs for label columns only (skip Level_latest score plots).
         plot_cols = [c for c in cols if not str(c).endswith("_score")]
-        logger.info("  Wrote obs columns: %s", ", ".join(cols))
+        logger.info("  Added annotation columns: %s", ", ".join(cols))
 
         if save_plots:
             for col in plot_cols:
@@ -598,10 +598,10 @@ def annotate_dataset(
     clustered_dir_p.mkdir(parents=True, exist_ok=True)
     clustered_path = clustered_dir_p / f"{path.stem}_clustered.h5ad"
     adata.write_h5ad(clustered_path)
-    logger.info("Clustered object: %s", clustered_path)
+    logger.info("Saved clustered object: %s", clustered_path)
 
     adata.write_h5ad(out_path)
-    logger.info("Annotated object: %s", out_path)
+    logger.info("Saved annotated object: %s", out_path)
 
     # Compact assignment CSV for all resolutions.
     csv_rows = []
@@ -614,7 +614,7 @@ def annotate_dataset(
     if csv_rows:
         csv_path = out_dir / f"{path.stem}_snapseed_assignments.csv"
         pd.concat(csv_rows, ignore_index=True).to_csv(csv_path, index=False)
-        logger.info("Assignments CSV: %s", csv_path)
+        logger.info("Saved assignments CSV: %s", csv_path)
 
     return out_path
 
