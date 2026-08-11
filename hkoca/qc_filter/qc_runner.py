@@ -163,7 +163,11 @@ def run_qc(
         env=_subprocess_env_for_rscript(cmd[0]),
     )
     if result.returncode != 0:
-        logger.error("QC R script failed (exit %s)", result.returncode)
+        logger.error(
+            "QC R script failed (exit %s). Pipeline is NOT complete "
+            "(doublet/QC may have finished, but a later step such as H5AD failed).",
+            result.returncode,
+        )
         return result.returncode
-    logger.info("QC run completed. Outputs under: %s", output_dir)
+    logger.info("QC run completed successfully (all requested steps passed). Outputs under: %s", output_dir)
     return 0

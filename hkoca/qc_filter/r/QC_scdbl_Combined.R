@@ -361,7 +361,7 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     cat("Options:\n")
     cat(sprintf("  --config PATH            Config DCF file (default: %s)\n", default_config))
     cat("  --filters PATH           Path to an external CSV file for QC cutoffs\n")
-    cat("  --run STR                all | qc | doublet  (default: all)\n")
+    cat("  --run STR                all | qc | doublet | h5ad  (default: all)\n")
     cat("  --rds_dir PATH           Override raw RDS input directory\n")
     cat("  --output_dir PATH        Override output base directory\n")
     cat("  --summary_subdir NAME    Override QC summary subdirectory\n")
@@ -405,21 +405,53 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
 
 # -- 1.11b Seurat v4/v5 RNA counts extraction ---------------------------------
 # JoinLayers when needed, then pull counts via LayerData / GetAssayData / slots.
+.get_seurat_assay_names <- function(seurat_obj) {
+    assays_err <- NULL
+    nms <- tryCatch(
+        as.character(SeuratObject::Assays(seurat_obj)),
+        error = function(e) {
+            assays_err <<- conditionMessage(e)
+            character(0)
+        }
+    )
+    if (length(nms)) return(nms)
+
+    slot_nms <- tryCatch(names(slot(seurat_obj, "assays")), error = function(e) NULL)
+    if (!is.null(slot_nms) && length(slot_nms)) return(as.character(slot_nms))
+
+    has_rna <- tryCatch(!is.null(seurat_obj@assays[["RNA"]]), error = function(e) FALSE)
+    if (isTRUE(has_rna)) return("RNA")
+
+    stop(sprintf(
+        "Seurat object has no assays (class=%s; Assays()=%s; @assays names=%s).",
+        paste(class(seurat_obj), collapse = ","),
+        if (is.null(assays_err)) "<empty>" else assays_err,
+        if (is.null(slot_nms) || !length(slot_nms)) "<none>" else paste(slot_nms, collapse = ",")
+    ))
+}
+
+.get_seurat_assay <- function(seurat_obj, assay_name) {
+    assay_obj <- tryCatch(seurat_obj[[assay_name]], error = function(e) NULL)
+    if (!is.null(assay_obj)) return(assay_obj)
+    assay_obj <- tryCatch(slot(seurat_obj, "assays")[[assay_name]], error = function(e) NULL)
+    if (!is.null(assay_obj)) return(assay_obj)
+    stop(sprintf("Could not access assay '%s'.", assay_name))
+}
+
 .extract_rna_counts <- function(seurat_obj) {
     if (!inherits(seurat_obj, "Seurat")) {
         stop(sprintf("Expected a Seurat object, got: %s", paste(class(seurat_obj), collapse = ",")))
     }
 
-    assay_names <- tryCatch(as.character(Assays(seurat_obj)), error = function(e) character(0))
-    if (!length(assay_names)) stop("Seurat object has no assays.")
+    assay_names <- .get_seurat_assay_names(seurat_obj)
     assay_name <- tryCatch(as.character(DefaultAssay(seurat_obj))[1], error = function(e) NA_character_)
     if (!length(assay_name) || is.na(assay_name) || !assay_name %in% assay_names) {
         assay_name <- if ("RNA" %in% assay_names) "RNA" else assay_names[[1]]
     }
 
     # Multi-layer Assay5 objects need JoinLayers before a single counts matrix exists.
-    if (inherits(seurat_obj[[assay_name]], "Assay5") &&
-        exists("JoinLayers", mode = "function")) {
+    assay_obj <- .get_seurat_assay(seurat_obj, assay_name)
+    if (inherits(assay_obj, "Assay5") && exists("JoinLayers", mode = "function")) {
         seurat_obj <- tryCatch(
             JoinLayers(seurat_obj, assay = assay_name),
             error = function(e) {
@@ -428,9 +460,9 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
                 seurat_obj
             }
         )
+        assay_obj <- .get_seurat_assay(seurat_obj, assay_name)
     }
 
-    assay_obj <- seurat_obj[[assay_name]]
     cm <- NULL
 
     cm <- tryCatch(
@@ -469,6 +501,10 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
             cm <- layers[[layer_nm]]
         }
     }
+    # Direct RNA$counts style access used by Seurat v5 docs.
+    if (is.null(cm)) {
+        cm <- tryCatch(assay_obj$counts, error = function(e) NULL)
+    }
 
     if (is.null(cm)) {
         stop(sprintf(
@@ -481,10 +517,11 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     }
 
     # Recover missing dimnames from the Seurat object (avoid fragile Assay5 feature maps).
-    obj_genes <- tryCatch(rownames(seurat_obj, assay = assay_name), error = function(e) {
-        tryCatch(rownames(seurat_obj), error = function(e2) NULL)
-    })
+    obj_genes <- tryCatch(rownames(seurat_obj), error = function(e) NULL)
     obj_cells <- tryCatch(colnames(seurat_obj), error = function(e) NULL)
+    if ((is.null(obj_genes) || !length(obj_genes)) && .hasSlot(assay_obj, "meta.features")) {
+        obj_genes <- tryCatch(rownames(slot(assay_obj, "meta.features")), error = function(e) NULL)
+    }
     if (is.null(rownames(cm)) || !length(rownames(cm))) {
         if (!is.null(obj_genes) && length(obj_genes) == nrow(cm)) {
             rownames(cm) <- as.character(obj_genes)
@@ -825,8 +862,8 @@ if (!is.null(cli_args$stage) && (is.null(cli_args$run) || !nzchar(cli_args$run))
     message("Note: --stage is deprecated; use --run (all | qc | doublet)")
 
 QC_RUN <- tolower(cli_args$run %||% cli_args$stage %||% "all")
-if (!QC_RUN %in% c("all", "qc", "doublet"))
-    stop(sprintf("Invalid --run '%s'. Choose: all | qc | doublet", QC_RUN))
+if (!QC_RUN %in% c("all", "qc", "doublet", "h5ad"))
+    stop(sprintf("Invalid --run '%s'. Choose: all | qc | doublet | h5ad", QC_RUN))
 
 RUN_QC      <- QC_RUN %in% c("all", "qc")
 RUN_DOUBLET <- QC_RUN %in% c("all", "doublet")
@@ -847,6 +884,9 @@ DOUBLET_SUMMARY_DIR <- file.path(DOUBLET_DIR, "Summary")
 INTEGRATED_SUMMARY_DIR <- if (nzchar(integrated_summary_subdir)) file.path(BASE_OUT_DIR, integrated_summary_subdir) else BASE_OUT_DIR
 
 RUN_H5AD        <- .as_bool(cfg$run_h5ad_conversion %||% "FALSE", FALSE)
+if (identical(QC_RUN, "h5ad")) {
+    RUN_H5AD <- TRUE
+}
 h5ad_subdir     <- if (!is.null(cfg$h5ad_output_subdir) && nzchar(cfg$h5ad_output_subdir)) cfg$h5ad_output_subdir else "h5ad_converted"
 H5AD_DIR        <- file.path(BASE_OUT_DIR, h5ad_subdir)
 
@@ -2665,7 +2705,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     rds_files <- list.files(input_dir, pattern = "\\.rds$", full.names = TRUE)
     if (length(rds_files) == 0) {
         log_warn(sprintf("No RDS files found in %s for H5AD conversion.", input_dir))
-        return()
+        return(invisible(list(ok = 0L, fail = 0L)))
     }
 
     n_ok <- 0L
@@ -2684,15 +2724,21 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         log_info(sprintf("[H5AD] Converting: %s", base_name))
         success <- tryCatch({
             seurat_obj <- readRDS(rds_path)
+            log_info(sprintf(
+                "  Loaded class=%s | assays=%s",
+                paste(class(seurat_obj), collapse = ","),
+                paste(.get_seurat_assay_names(seurat_obj), collapse = ",")
+            ))
             extracted <- .extract_rna_counts(seurat_obj)
             cm <- extracted$counts
             seurat_obj <- extracted$object
+            assay_obj <- .get_seurat_assay(seurat_obj, extracted$assay)
             log_info(sprintf(
                 "  Assay=%s | genes=%s | cells=%s | class=%s",
                 extracted$assay,
                 format(nrow(cm), big.mark = ","),
                 format(ncol(cm), big.mark = ","),
-                paste(class(seurat_obj[[extracted$assay]]), collapse = ",")
+                paste(class(assay_obj), collapse = ",")
             ))
 
             meta_data <- as.data.frame(seurat_obj@meta.data, stringsAsFactors = FALSE)
@@ -2772,12 +2818,19 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     }
 
     log_info(sprintf("H5AD Conversion Complete. ok=%d fail=%d out=%s", n_ok, n_fail, output_dir))
+    if (n_fail > 0L) {
+        log_error(sprintf(
+            "H5AD conversion failed for %d file(s) under %s.",
+            n_fail, output_dir
+        ))
+    }
     if (n_ok == 0L) {
         log_error(sprintf(
             "No H5AD files were written under %s. Re-run with --force_overwrite after fixing the conversion error.",
             output_dir
         ))
     }
+    invisible(list(ok = n_ok, fail = n_fail))
 }
 
 # -- Stage execution dispatcher -------------------------------------------------
@@ -2795,10 +2848,13 @@ if (QC_RUN == "all") {
     .run_stage_qc(qc_input_dir = if (reverse_mode_run) DOUBLET_DIR else rds_dir)
 } else if (QC_RUN == "doublet") {
     .run_stage_doublet(doublet_input_dir = if (reverse_mode_run) rds_dir else FILTERED_DIR)
+} else if (QC_RUN == "h5ad") {
+    log_info("H5AD-only run: skipping doublet and QC filtering stages.")
 }
 
 # -- Optional Stage: H5AD conversion -------------------------------------------
 if (RUN_H5AD) {
+    # Final objects: reverse_mode = QC-filtered RDS; otherwise doublet singlets.
     h5ad_input_dir <- if (QC_RUN == "qc") {
         FILTERED_DIR
     } else if (QC_RUN == "doublet") {
@@ -2808,7 +2864,38 @@ if (RUN_H5AD) {
     } else {
         DOUBLET_DIR
     }
-    .run_stage_h5ad(h5ad_input_dir, H5AD_DIR)
+    if (!dir.exists(h5ad_input_dir) || !length(list.files(h5ad_input_dir, pattern = "\\.rds$", ignore.case = TRUE))) {
+        log_error(sprintf(
+            "H5AD conversion requested but no input RDS found in %s. Finish doublet/QC first, or pass --run all.",
+            h5ad_input_dir
+        ))
+        quit(save = "no", status = 1)
+    }
+
+    pending <- list.files(h5ad_input_dir, pattern = "\\.rds$", ignore.case = TRUE)
+    pending_base <- sub("\\.rds$", "", pending, ignore.case = TRUE)
+    h5ad_paths <- file.path(H5AD_DIR, paste0(pending_base, ".h5ad"))
+    have_h5ad <- file.exists(h5ad_paths)
+    if (any(have_h5ad)) {
+        sizes <- file.info(h5ad_paths[have_h5ad])$size
+        have_h5ad[have_h5ad] <- !is.na(sizes) & sizes > 0
+    }
+    if (!.as_bool(cfg$force_overwrite, FALSE) && any(!have_h5ad) && (RUN_QC || RUN_DOUBLET)) {
+        log_info(sprintf(
+            "H5AD resume: %d / %d converted files missing; finished QC/doublet RDS will be skipped when unchanged.",
+            sum(!have_h5ad), length(pending_base)
+        ))
+    }
+
+    h5ad_result <- .run_stage_h5ad(h5ad_input_dir, H5AD_DIR)
+    h5ad_fail <- is.null(h5ad_result) ||
+        isTRUE(as.integer(h5ad_result$fail) > 0L) ||
+        isTRUE(as.integer(h5ad_result$ok) == 0L)
+    if (h5ad_fail) {
+        log_error("H5AD conversion did not fully succeed; QC pipeline exiting with status 1 (not COMPLETE).")
+        log_error("Re-run with: hkoca qc_filter ... --run h5ad   (skips finished QC/doublet).")
+        quit(save = "no", status = 1)
+    }
 }
 
 # ==============================================================================
@@ -2824,6 +2911,7 @@ if (RUN_QC)      log_info(sprintf("  QC dashboard : %s", file.path(QC_DIR,      
 if (RUN_QC)      log_info(sprintf("  QC summary   : %s", file.path(QC_DIR,              "qc_summary_detailed.csv")))
 if (RUN_DOUBLET) log_info(sprintf("  Doublet PDF  : %s", file.path(DOUBLET_SUMMARY_DIR, paste0("Doublet_Audit_Report_", run_ts, ".pdf"))))
 if (RUN_DOUBLET) log_info(sprintf("  Doublet CSV  : %s", file.path(DOUBLET_SUMMARY_DIR, paste0("doublet_summary_",      run_ts, ".csv"))))
+if (RUN_H5AD)    log_info(sprintf("  H5AD dir     : %s", H5AD_DIR))
 log_info(sprintf("  Log file     : %s", log_file_path))
 log_info("==================================================")
 

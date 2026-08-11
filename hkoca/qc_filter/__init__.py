@@ -118,8 +118,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run",
         default="all",
-        choices=["all", "qc", "doublet"],
-        help="QC R substeps to run after harmonization: all, doublet only, or qc only (default: all)",
+        choices=["all", "qc", "doublet", "h5ad"],
+        help=(
+            "QC R substeps after harmonization: all, doublet, qc, or h5ad "
+            "(conversion only; default: all). Re-run with --run h5ad after a "
+            "failed conversion without redoing QC."
+        ),
     )
     parser.add_argument(
         "--rds-pattern",
