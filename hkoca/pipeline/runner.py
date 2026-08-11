@@ -155,9 +155,14 @@ def run_annotation_stage(cfg: PipelineConfig, *, dry_run: bool = False) -> int:
     out_dir = os.path.join(cfg.output_root, cfg.annotation_output_subdir)
     logger.info("STEP: annotation -> %s", out_dir)
     if dry_run:
-        logger.info("[dry-run] would run annotation (not implemented yet)")
+        logger.info("[dry-run] would run Snapseed annotation via hkoca annotation run")
         return 0
-    logger.warning("Annotation stage is not implemented yet; skipping.")
+    logger.warning(
+        "Pipeline annotation stage not auto-wired yet; run "
+        "`hkoca annotation run --input <h5ad> --output-dir %s` "
+        "(default resolutions 0.4,0.6,1.0).",
+        out_dir,
+    )
     for line in status_message().splitlines():
         logger.info("  %s", line)
     return 0

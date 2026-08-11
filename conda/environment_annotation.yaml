@@ -1,0 +1,19 @@
+name: hkoca_annotation
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - h5py
+  - anndata
+  - scanpy
+  - matplotlib
+  - pyyaml
+  - pip:
+      # Snapseed is typically installed from GitHub; pin/update as needed.
+      - snapseed

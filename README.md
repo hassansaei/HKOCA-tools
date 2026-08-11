@@ -36,6 +36,7 @@ the QC R script. There are no separate harmonize/qc CLIs.
 ```bash
 conda env create -f conda/environment_harmonize.yaml
 conda env create -f conda/environment_qc.yaml
+conda env create -f conda/environment_annotation.yaml
 conda activate hkoca_harmonize
 pip install -e .
 ```
@@ -94,7 +95,27 @@ Outputs are written under `--output`:
 - CellBender: `{sample_dir}/{sample_id}_filtered.h5` (when enabled)
 - Harmonize: `{output}/{study}/raw|harmonized|rds/`
 - QC: `{output}/qc_filter/` (or `--qc-output`)
-- Annotation / integration: reserved subdirs (stages not implemented yet)
+- Annotation / integration: `{output}/annotation/` via `hkoca annotation` (pipeline auto-wire later)
+
+### Annotation (Snapseed)
+
+```bash
+conda activate hkoca_annotation
+pip install -e .
+
+# Editable copy of the packaged marker hierarchy
+hkoca annotation markers export ./snapseed_markers.yaml
+
+# QC-filtered or post-integration h5ad; default Leiden resolutions 0.4, 0.6, 1.0
+hkoca annotation run \
+  --input sample_filtered.h5ad \
+  --output-dir results/annotation \
+  --markers ./snapseed_markers.yaml
+```
+
+Outputs under `--output-dir`: `annotated/*_annotated.h5ad`, `clustered/*_clustered.h5ad`,
+optional `figures/`. Each annotated object stores labels for all three resolutions
+(`leiden_res_0.4` / `Level_*_res0.4`, etc.).
 
 ### QC-filter
 

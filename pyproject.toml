@@ -32,6 +32,17 @@ qc-filter = [
   "matplotlib",
   "seaborn",
 ]
+annotation = [
+  "scanpy",
+  "anndata",
+  "pandas",
+  "numpy",
+  "scipy",
+  "h5py",
+  "matplotlib",
+  "pyyaml",
+  "snapseed",
+]
 
 [project.scripts]
 hkoca = "hkoca.cli:main"
@@ -50,3 +61,4 @@ include = ["hkoca*"]
 "hkoca.qc_filter.harmonize" = ["*.config"]
 "hkoca.pipeline" = ["*.config", "*.csv"]
 "hkoca.qc_filter.r" = ["*.R", "*.dcf", "*.csv"]
+"hkoca.annotation.data" = ["*.yaml"]

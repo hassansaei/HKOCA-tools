@@ -1,0 +1,31 @@
+# Default Snapseed annotation config for hkoca annotation.
+# Paths may be absolute or relative to --working-dir / the config file directory.
+# Override any key via CLI flags.
+
+paths:
+  # Input: one h5ad, a directory of h5ad files, or a glob (CLI --input overrides).
+  input: null
+  # Marker hierarchy YAML (default: packaged snapseed_markers_v4.yaml).
+  markers: null
+  # Root output directory.
+  output_dir: annotation_results
+  annotated_subdir: annotated
+  clustered_subdir: clustered
+  figures_subdir: figures
+
+parameters:
+  seed: 42
+  scanpy_verbosity: 1
+  # Leiden resolutions used for Snapseed (run all by default).
+  resolutions: [0.4, 0.6, 1.0]
+  hvg_n_top_genes: 3000
+  pca_n_comps: 50
+  neighbors_n_neighbors: 20
+  neighbors_n_pcs: 30
+  scale_max_value: 10
+  normalize_target_sum: 10000
+  # Write UMAP / assignment PNGs when true.
+  save_plots: false
+  dpi: 150
+  # Skip samples that already have matching annotated outputs.
+  skip_existing: true
