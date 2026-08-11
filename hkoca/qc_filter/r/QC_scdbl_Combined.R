@@ -403,6 +403,99 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     jsonlite::write_json(meta_data, meta_path, auto_unbox = TRUE, pretty = TRUE)
 }
 
+# -- 1.11b Seurat v4/v5 RNA counts extraction ---------------------------------
+# JoinLayers when needed, then pull counts via LayerData / GetAssayData / slots.
+.extract_rna_counts <- function(seurat_obj) {
+    if (!inherits(seurat_obj, "Seurat")) {
+        stop(sprintf("Expected a Seurat object, got: %s", paste(class(seurat_obj), collapse = ",")))
+    }
+
+    assay_names <- Assays(seurat_obj)
+    assay_name <- tryCatch(DefaultAssay(seurat_obj), error = function(e) NA_character_)
+    if (!length(assay_name) || is.na(assay_name) || !assay_name %in% assay_names) {
+        assay_name <- if ("RNA" %in% assay_names) "RNA" else assay_names[[1]]
+    }
+
+    # Multi-layer Assay5 objects need JoinLayers before a single counts matrix exists.
+    if (inherits(seurat_obj[[assay_name]], "Assay5") &&
+        exists("JoinLayers", mode = "function")) {
+        seurat_obj <- tryCatch(
+            JoinLayers(seurat_obj, assay = assay_name),
+            error = function(e) {
+                warning(sprintf("JoinLayers failed (%s); continuing with existing layers.",
+                                conditionMessage(e)))
+                seurat_obj
+            }
+        )
+    }
+
+    assay_obj <- seurat_obj[[assay_name]]
+    cm <- NULL
+
+    cm <- tryCatch(
+        LayerData(seurat_obj, assay = assay_name, layer = "counts"),
+        error = function(e) NULL
+    )
+    if (is.null(cm)) {
+        cm <- tryCatch(
+            GetAssayData(seurat_obj, assay = assay_name, layer = "counts"),
+            error = function(e) NULL
+        )
+    }
+    if (is.null(cm)) {
+        cm <- tryCatch(
+            GetAssayData(seurat_obj, assay = assay_name, slot = "counts"),
+            error = function(e) NULL
+        )
+    }
+    if (is.null(cm) && .hasSlot(assay_obj, "counts")) {
+        cm <- tryCatch(slot(assay_obj, "counts"), error = function(e) NULL)
+        if (!is.null(cm) && inherits(cm, "IterableMatrix")) cm <- NULL
+        if (!is.null(cm) && ((inherits(cm, "Matrix") && length(cm@x) == 0) ||
+                             (is.matrix(cm) && length(cm) == 0))) cm <- NULL
+    }
+    if (is.null(cm) && .hasSlot(assay_obj, "layers")) {
+        layers <- slot(assay_obj, "layers")
+        layer_nms <- names(layers)
+        layer_nm <- if ("counts" %in% layer_nms) {
+            "counts"
+        } else {
+            grep("^counts(\\.|$)", layer_nms, value = TRUE)[1]
+        }
+        if (length(layer_nm) == 1L && !is.na(layer_nm) && nzchar(layer_nm)) {
+            cm <- layers[[layer_nm]]
+            if (is.null(rownames(cm)) || is.null(colnames(cm))) {
+                if (.hasSlot(assay_obj, "features") && .hasSlot(assay_obj, "cells")) {
+                    feats <- slot(assay_obj, "features")
+                    cells <- slot(assay_obj, "cells")
+                    if (layer_nm %in% colnames(feats) && layer_nm %in% colnames(cells)) {
+                        rownames(cm) <- rownames(feats)[as.logical(feats[[layer_nm]])]
+                        colnames(cm) <- rownames(cells)[as.logical(cells[[layer_nm]])]
+                    }
+                }
+            }
+        }
+    }
+
+    if (is.null(cm)) {
+        stop(sprintf(
+            "Could not extract counts from assay '%s' (class=%s).",
+            assay_name, paste(class(assay_obj), collapse = ",")
+        ))
+    }
+    if (!inherits(cm, "dgCMatrix")) {
+        cm <- tryCatch(as(cm, "dgCMatrix"), error = function(e) Matrix::Matrix(cm, sparse = TRUE))
+    }
+    if (is.null(rownames(cm)) || !length(rownames(cm))) {
+        stop("Counts matrix has no gene names (rownames).")
+    }
+    if (is.null(colnames(cm)) || !length(colnames(cm))) {
+        stop("Counts matrix has no cell barcodes (colnames).")
+    }
+
+    list(counts = cm, assay = assay_name, object = seurat_obj)
+}
+
 # -- 1.12 10x multiplet-rate tables -------------------------------------------
 # Approximate published values; DBR is interpolated piecewise-linearly from
 # post-ghost-filter cell count (with edge-slope extrapolation beyond range).
@@ -2559,11 +2652,15 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     log_info(sprintf("  Output : %s", output_dir))
     log_info("--------------------------------------------------")
 
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
     rds_files <- list.files(input_dir, pattern = "\\.rds$", full.names = TRUE)
     if (length(rds_files) == 0) {
         log_warn(sprintf("No RDS files found in %s for H5AD conversion.", input_dir))
         return()
     }
+
+    n_ok <- 0L
+    n_fail <- 0L
 
     for (rds_path in rds_files) {
         base_name <- sub("\\.rds$", "", basename(rds_path), ignore.case = TRUE)
@@ -2571,42 +2668,88 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 
         if (!.as_bool(cfg$force_overwrite, FALSE) && file.exists(h5ad_path) && file.info(h5ad_path)$size > 0) {
             log_info(sprintf("[H5AD SKIPPED] %s.h5ad already exists.", base_name))
+            n_ok <- n_ok + 1L
             next
         }
 
         log_info(sprintf("[H5AD] Converting: %s", base_name))
         success <- tryCatch({
             seurat_obj <- readRDS(rds_path)
+            extracted <- .extract_rna_counts(seurat_obj)
+            cm <- extracted$counts
+            seurat_obj <- extracted$object
+            log_info(sprintf(
+                "  Assay=%s | genes=%s | cells=%s | class=%s",
+                extracted$assay,
+                format(nrow(cm), big.mark = ","),
+                format(ncol(cm), big.mark = ","),
+                paste(class(seurat_obj[[extracted$assay]]), collapse = ",")
+            ))
 
-            # Handle Seurat v5 Assays (convert to strictly safe Assay object to flatten layers)
-            if (inherits(seurat_obj[["RNA"]], "Assay5")) {
-                seurat_obj[["RNA"]] <- as(object = seurat_obj[["RNA"]], Class = "Assay")
+            meta_data <- as.data.frame(seurat_obj@meta.data, stringsAsFactors = FALSE)
+            cells <- colnames(cm)
+            if (!identical(rownames(meta_data), cells)) {
+                if (nrow(meta_data) == length(cells) && !anyDuplicated(cells)) {
+                    # Prefer matrix barcode order when lengths match.
+                    if (all(cells %in% rownames(meta_data))) {
+                        meta_data <- meta_data[cells, , drop = FALSE]
+                    } else {
+                        rownames(meta_data) <- cells
+                    }
+                } else {
+                    common <- intersect(cells, rownames(meta_data))
+                    if (length(common) == 0) {
+                        stop("No overlapping cell barcodes between counts colnames and meta.data rownames.")
+                    }
+                    if (length(common) < length(cells)) {
+                        log_warn(sprintf(
+                            "  Aligning to %d / %d shared barcodes between counts and meta.data.",
+                            length(common), length(cells)
+                        ))
+                    }
+                    cm <- cm[, common, drop = FALSE]
+                    meta_data <- meta_data[common, , drop = FALSE]
+                    cells <- common
+                }
             }
 
-            # Extract count matrix and transpose (AnnData expects Cells x Genes)
-            counts <- GetAssayData(seurat_obj, assay = "RNA", slot = "counts")
-            counts_t <- t(counts)
-
-            # Extract metadata
-            meta_data <- seurat_obj@meta.data
-
-            # Create AnnData object
-            ad <- anndata::AnnData(
-                X = counts_t,
-                obs = meta_data
+            var_df <- data.frame(
+                features = rownames(cm),
+                row.names = rownames(cm),
+                stringsAsFactors = FALSE
             )
 
-            # Write to h5ad
+            # AnnData X is cells x genes.
+            counts_t <- Matrix::t(cm)
+            ad <- anndata::AnnData(
+                X = counts_t,
+                obs = meta_data,
+                var = var_df
+            )
             ad$write_h5ad(h5ad_path)
-            log_info(sprintf("  Saved: %s", h5ad_path))
-            rm(seurat_obj, counts, counts_t, meta_data, ad); gc()
+
+            if (!file.exists(h5ad_path) || file.info(h5ad_path)$size == 0) {
+                stop("write_h5ad completed but output file is missing or empty.")
+            }
+            log_info(sprintf("  Saved: %s (%.1f MB)", h5ad_path, file.info(h5ad_path)$size / 1e6))
+            rm(seurat_obj, extracted, cm, counts_t, meta_data, var_df, ad)
+            gc()
             TRUE
         }, error = function(e) {
             log_error(sprintf("[FAILED H5AD] %s: %s", base_name, conditionMessage(e)))
             FALSE
         })
+
+        if (isTRUE(success)) n_ok <- n_ok + 1L else n_fail <- n_fail + 1L
     }
-    log_info("H5AD Conversion Complete.")
+
+    log_info(sprintf("H5AD Conversion Complete. ok=%d fail=%d out=%s", n_ok, n_fail, output_dir))
+    if (n_ok == 0L) {
+        log_error(sprintf(
+            "No H5AD files were written under %s. Re-run with --force_overwrite after fixing the conversion error.",
+            output_dir
+        ))
+    }
 }
 
 # -- Stage execution dispatcher -------------------------------------------------
