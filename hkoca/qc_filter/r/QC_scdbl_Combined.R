@@ -410,8 +410,9 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
         stop(sprintf("Expected a Seurat object, got: %s", paste(class(seurat_obj), collapse = ",")))
     }
 
-    assay_names <- Assays(seurat_obj)
-    assay_name <- tryCatch(DefaultAssay(seurat_obj), error = function(e) NA_character_)
+    assay_names <- tryCatch(as.character(Assays(seurat_obj)), error = function(e) character(0))
+    if (!length(assay_names)) stop("Seurat object has no assays.")
+    assay_name <- tryCatch(as.character(DefaultAssay(seurat_obj))[1], error = function(e) NA_character_)
     if (!length(assay_name) || is.na(assay_name) || !assay_name %in% assay_names) {
         assay_name <- if ("RNA" %in% assay_names) "RNA" else assay_names[[1]]
     }
@@ -457,23 +458,15 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     if (is.null(cm) && .hasSlot(assay_obj, "layers")) {
         layers <- slot(assay_obj, "layers")
         layer_nms <- names(layers)
+        if (is.null(layer_nms)) layer_nms <- character(0)
         layer_nm <- if ("counts" %in% layer_nms) {
             "counts"
         } else {
-            grep("^counts(\\.|$)", layer_nms, value = TRUE)[1]
+            hits <- grep("^counts(\\.|$)", layer_nms, value = TRUE)
+            if (length(hits)) hits[[1]] else NA_character_
         }
         if (length(layer_nm) == 1L && !is.na(layer_nm) && nzchar(layer_nm)) {
             cm <- layers[[layer_nm]]
-            if (is.null(rownames(cm)) || is.null(colnames(cm))) {
-                if (.hasSlot(assay_obj, "features") && .hasSlot(assay_obj, "cells")) {
-                    feats <- slot(assay_obj, "features")
-                    cells <- slot(assay_obj, "cells")
-                    if (layer_nm %in% colnames(feats) && layer_nm %in% colnames(cells)) {
-                        rownames(cm) <- rownames(feats)[as.logical(feats[[layer_nm]])]
-                        colnames(cm) <- rownames(cells)[as.logical(cells[[layer_nm]])]
-                    }
-                }
-            }
         }
     }
 
@@ -486,12 +479,28 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     if (!inherits(cm, "dgCMatrix")) {
         cm <- tryCatch(as(cm, "dgCMatrix"), error = function(e) Matrix::Matrix(cm, sparse = TRUE))
     }
+
+    # Recover missing dimnames from the Seurat object (avoid fragile Assay5 feature maps).
+    obj_genes <- tryCatch(rownames(seurat_obj, assay = assay_name), error = function(e) {
+        tryCatch(rownames(seurat_obj), error = function(e2) NULL)
+    })
+    obj_cells <- tryCatch(colnames(seurat_obj), error = function(e) NULL)
     if (is.null(rownames(cm)) || !length(rownames(cm))) {
-        stop("Counts matrix has no gene names (rownames).")
+        if (!is.null(obj_genes) && length(obj_genes) == nrow(cm)) {
+            rownames(cm) <- as.character(obj_genes)
+        } else {
+            stop("Counts matrix has no gene names (rownames).")
+        }
     }
     if (is.null(colnames(cm)) || !length(colnames(cm))) {
-        stop("Counts matrix has no cell barcodes (colnames).")
+        if (!is.null(obj_cells) && length(obj_cells) == ncol(cm)) {
+            colnames(cm) <- as.character(obj_cells)
+        } else {
+            stop("Counts matrix has no cell barcodes (colnames).")
+        }
     }
+    rownames(cm) <- as.character(rownames(cm))
+    colnames(cm) <- as.character(colnames(cm))
 
     list(counts = cm, assay = assay_name, object = seurat_obj)
 }
@@ -2687,18 +2696,35 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             ))
 
             meta_data <- as.data.frame(seurat_obj@meta.data, stringsAsFactors = FALSE)
-            cells <- colnames(cm)
-            if (!identical(rownames(meta_data), cells)) {
+            cells <- as.character(colnames(cm))
+            meta_ids <- rownames(meta_data)
+            if (is.null(meta_ids) || !length(meta_ids)) {
+                # as.data.frame can drop rownames on some Seurat builds
+                obj_cells <- as.character(colnames(seurat_obj))
+                if (length(obj_cells) == nrow(meta_data)) {
+                    rownames(meta_data) <- obj_cells
+                    meta_ids <- obj_cells
+                } else if (length(cells) == nrow(meta_data)) {
+                    rownames(meta_data) <- cells
+                    meta_ids <- cells
+                } else {
+                    stop("meta.data has no rownames and lengths do not match counts barcodes.")
+                }
+            } else {
+                meta_ids <- as.character(meta_ids)
+                rownames(meta_data) <- meta_ids
+            }
+
+            if (!identical(meta_ids, cells)) {
                 if (nrow(meta_data) == length(cells) && !anyDuplicated(cells)) {
-                    # Prefer matrix barcode order when lengths match.
-                    if (all(cells %in% rownames(meta_data))) {
+                    if (!is.null(meta_ids) && all(cells %in% meta_ids)) {
                         meta_data <- meta_data[cells, , drop = FALSE]
                     } else {
                         rownames(meta_data) <- cells
                     }
                 } else {
-                    common <- intersect(cells, rownames(meta_data))
-                    if (length(common) == 0) {
+                    common <- intersect(cells, meta_ids)
+                    if (!length(common)) {
                         stop("No overlapping cell barcodes between counts colnames and meta.data rownames.")
                     }
                     if (length(common) < length(cells)) {
@@ -2712,6 +2738,8 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                     cells <- common
                 }
             }
+            # AnnData obs index must be unique character barcodes.
+            rownames(meta_data) <- as.character(rownames(meta_data))
 
             var_df <- data.frame(
                 features = rownames(cm),
