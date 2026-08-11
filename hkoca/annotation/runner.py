@@ -283,6 +283,14 @@ def annotate_dataset(
             "or: pip install igraph leidenalg"
         ) from exc
 
+    try:
+        import leidenalg  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "leidenalg is required for Leiden clustering. Install with: "
+            "conda install -c conda-forge leidenalg or: pip install leidenalg"
+        ) from exc
+
     path = Path(file_path).expanduser().resolve()
     out_dir = Path(output_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
