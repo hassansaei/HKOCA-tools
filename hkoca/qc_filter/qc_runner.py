@@ -16,6 +16,8 @@ import subprocess
 from importlib import resources
 from pathlib import Path
 
+from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
+
 logger = logging.getLogger("hkoca.qc_filter")
 
 # Matches ``name:`` in conda/environment_qc.yaml and docker/Dockerfile.
@@ -30,65 +32,10 @@ def packaged_qc_config() -> Path:
     return Path(resources.files("hkoca.qc_filter.r").joinpath("qc_config.dcf")).resolve()
 
 
-def _conda_roots() -> list[Path]:
-    """Candidate conda install roots (base prefixes that contain ``envs/``)."""
-    roots: list[Path] = []
-    seen: set[str] = set()
-
-    def add(path: Path | None) -> None:
-        if path is None:
-            return
-        try:
-            resolved = path.resolve()
-        except OSError:
-            return
-        key = str(resolved)
-        if key in seen:
-            return
-        seen.add(key)
-        roots.append(resolved)
-
-    explicit = os.environ.get("CONDA_ROOT") or os.environ.get("MAMBA_ROOT_PREFIX")
-    if explicit:
-        add(Path(explicit))
-
-    prefix = os.environ.get("CONDA_PREFIX")
-    if prefix:
-        p = Path(prefix)
-        # .../envs/<name> -> base; otherwise treat as base itself
-        if p.parent.name == "envs":
-            add(p.parent.parent)
-        else:
-            add(p)
-
-    conda_exe = os.environ.get("CONDA_EXE") or shutil.which("conda")
-    if conda_exe:
-        # .../bin/conda or .../condabin/conda
-        add(Path(conda_exe).resolve().parent.parent)
-
-    # Docker / miniforge default used by this project's image
-    add(Path("/opt/conda"))
-
-    return roots
-
-
 def resolve_qc_env_prefix() -> Path | None:
     """Return the QC conda env prefix if it exists on this machine."""
     env_name = os.environ.get("HKOCA_QC_ENV", DEFAULT_QC_ENV).strip() or DEFAULT_QC_ENV
-
-    # Already running inside the QC env
-    current = os.environ.get("CONDA_PREFIX")
-    if current:
-        cur = Path(current)
-        if cur.name == env_name and (cur / "bin" / "Rscript").is_file():
-            return cur.resolve()
-
-    for root in _conda_roots():
-        candidate = root / "envs" / env_name
-        if (candidate / "bin" / "Rscript").is_file():
-            return candidate.resolve()
-
-    return None
+    return resolve_env_prefix(env_name, "Rscript")
 
 
 def find_rscript() -> str:
@@ -127,19 +74,8 @@ def find_rscript() -> str:
 
 def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
     """Run R under the same conda prefix as ``rscript`` (reticulate + libs)."""
-    env = os.environ.copy()
-    bin_dir = Path(rscript).resolve().parent
-    prefix = bin_dir.parent
-    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
-    env["CONDA_PREFIX"] = str(prefix)
-    env.pop("PYTHONHOME", None)
-
-    py = bin_dir / "python"
-    if py.is_file():
-        # Force reticulate/anndata onto the QC env Python, not harmonize's.
-        env["RETICULATE_PYTHON"] = str(py)
-
-    return env
+    prefix = Path(rscript).resolve().parent.parent
+    return subprocess_env_for_prefix(prefix)
 
 
 def default_qc_config() -> Path:

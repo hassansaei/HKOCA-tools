@@ -1,11 +1,27 @@
-"""End-to-end A–Z pipeline orchestrator.
+"""End-to-end A-Z pipeline orchestrator.
 
-Chains public modules as they become available:
+Chains stage modules in order:
 
-    cellbender → qc_filter (harmonize → doublets/QC) → annotation → integration
+    cellbender (optional) -> qc_filter -> annotation -> integration
+
+The sample_info CSV drives CellBender sample selection and harmonization
+metadata. Use ``--skip-cellbender`` or per-row ``run_cellbender=False`` to
+bypass ambient RNA removal.
 """
 
 from __future__ import annotations
+
+import argparse
+import logging
+import sys
+
+from hkoca.pipeline.config import (
+    default_config_path,
+    resolve_config,
+    template_csv_path,
+    validate_config,
+)
+from hkoca.pipeline.runner import run_pipeline
 
 STAGES = (
     "cellbender",
@@ -14,47 +30,171 @@ STAGES = (
     "integration",
 )
 
-
-def status_message() -> str:
-    lines = [
-        "Full A–Z pipeline orchestrator (in progress).",
-        "Planned stage order:",
-        "  1. cellbender     ambient RNA removal (optional per sample)",
-        "  2. qc_filter      harmonization then doublet detection + QC filtering",
-        "  3. annotation     cell-type annotation",
-        "  4. integration    batch integration / atlas projection",
-        "",
-        "Run a single module today with:",
-        "  hkoca cellbender",
-        "  hkoca qc-filter --csv meta.csv --gtf genes.gtf --output results",
-        "  hkoca annotation",
-        "  hkoca integration",
-    ]
-    return "\n".join(lines)
+logger = logging.getLogger("hkoca.pipeline")
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry for ``hkoca pipeline``."""
-    import argparse
+def _setup_logging(verbose: bool = False) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    if logger.handlers:
+        logger.handlers.clear()
+    logger.setLevel(level)
+    logger.propagate = False
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
+    logger.addHandler(handler)
 
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hkoca pipeline",
-        description="Run the full NephAtlas / HKOCA analysis pipeline (A–Z)",
+        description=(
+            "Run the full NephAtlas / HKOCA analysis pipeline from a sample_info CSV."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "sample_info CSV must include harmonize columns:\n"
+            "  data_path, sample_id, study, source, diff_protocol, sc_protocol,\n"
+            "  sequencing, genome_build, Age, type\n"
+            "\n"
+            "Optional pipeline columns:\n"
+            "  sample_dir       CellRanger sample directory (default: dirname of data_path)\n"
+            "  run_cellbender   True/False per sample (default: True)\n"
+            "  file_prefix      MTX prefix when data_path is a directory\n"
+            "  skip             True to exclude a row\n"
+            "\n"
+            "example:\n"
+            "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out\n"
+            "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out \\\n"
+            "    --skip-cellbender --to-stage qc_filter\n"
+        ),
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to pipeline.config (default: CWD then package pipeline.config)",
+    )
+    parser.add_argument(
+        "-w",
+        "--working-dir",
+        default=None,
+        help="Base directory for relative paths in the sample_info CSV",
+    )
+    parser.add_argument(
+        "--csv",
+        default=None,
+        help="Sample info CSV (required unless set in pipeline.config)",
+    )
+    parser.add_argument(
+        "--gtf",
+        default=None,
+        help="GRCh38 GTF for gene-space harmonization (required unless in config)",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Root output directory for all pipeline stages (required unless in config)",
+    )
+    parser.add_argument(
+        "--skip-cellbender",
+        action="store_true",
+        help="Skip CellBender for all samples (use raw or pre-filtered inputs in data_path)",
+    )
+    parser.add_argument(
+        "--cellbender-mode",
+        choices=["h5", "mtx"],
+        default=None,
+        help="CellBender input type (default: h5)",
+    )
+    parser.add_argument(
+        "--from-stage",
+        choices=STAGES,
+        default=None,
+        help="First stage to run (default: cellbender, or qc_filter with --skip-cellbender)",
+    )
+    parser.add_argument(
+        "--to-stage",
+        choices=STAGES,
+        default=None,
+        help="Last stage to run (default: integration)",
+    )
+    parser.add_argument(
+        "--qc-output",
+        default=None,
+        help="QC output directory (default: <output>/qc_filter)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned steps without executing them",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip CellBender samples whose output H5 already exists",
+    )
+    parser.add_argument(
+        "--print-template",
+        action="store_true",
+        help="Print path to the packaged sample_info_template.csv and exit",
     )
     parser.add_argument(
         "--list-stages",
         action="store_true",
-        help="Print planned pipeline stages and exit",
+        help="Print pipeline stages and exit",
     )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = _build_parser()
     args = parser.parse_args(argv)
+    _setup_logging(args.verbose)
+
+    if args.print_template:
+        print(template_csv_path())
+        return 0
 
     if args.list_stages:
         for name in STAGES:
             print(name)
         return 0
 
-    print(status_message())
-    return 1
+    from_stage = args.from_stage
+    if from_stage is None and args.skip_cellbender:
+        from_stage = "qc_filter"
+
+    try:
+        cfg = resolve_config(
+            default_config_path(args.config),
+            working_dir=args.working_dir,
+            sample_info_csv=args.csv,
+            gtf_file=args.gtf,
+            output_root=args.output,
+            run_cellbender=False if args.skip_cellbender else None,
+            cellbender_mode=args.cellbender_mode,
+            from_stage=from_stage,
+            to_stage=args.to_stage,
+            qc_output=args.qc_output,
+        )
+        validate_config(cfg)
+    except (ValueError, FileNotFoundError) as exc:
+        logger.error("%s", exc)
+        return 1
+
+    return run_pipeline(
+        cfg,
+        dry_run=args.dry_run,
+        skip_existing=args.skip_existing,
+        verbose=args.verbose,
+    )
 
 
-__all__ = ["STAGES", "main", "status_message"]
+__all__ = ["STAGES", "main"]

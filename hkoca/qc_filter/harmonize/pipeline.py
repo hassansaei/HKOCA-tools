@@ -273,7 +273,14 @@ MANDATORY_META_COLS = [
 #   file_prefix : MTX folder prefix (e.g. "sample1_"); defaults to "" when absent.
 #   output_dir  : per-study output path, only used when --output is not supplied on the CLI.
 #   skip        : set to "True" to exclude a row from the run.
-_OPTIONAL_PIPELINE_COLS = {"file_prefix", "output_dir", "skip"}
+_OPTIONAL_PIPELINE_COLS = {
+    "file_prefix",
+    "output_dir",
+    "skip",
+    "sample_dir",
+    "run_cellbender",
+    "cellbender_mode",
+}
 
 # All columns that must never be written to AnnData obs.
 _NON_OBS_COLS = {"data_path"} | _OPTIONAL_PIPELINE_COLS

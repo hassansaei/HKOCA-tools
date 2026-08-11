@@ -7,7 +7,10 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+
+from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
 
 from hkoca.cellbender.config import (
     CellBenderConfig,
@@ -18,6 +21,7 @@ from hkoca.cellbender.config import (
 logger = logging.getLogger("hkoca.cellbender")
 
 InputMode = Literal["h5", "mtx"]
+DEFAULT_CELLBENDER_ENV = "hkoca_cellbender"
 
 
 @dataclass(frozen=True)
@@ -29,14 +33,43 @@ class SampleJob:
 
 
 def find_cellbender() -> str:
+    override = os.environ.get("HKOCA_CELLBENDER", "").strip()
+    if override:
+        if not Path(override).is_file():
+            raise FileNotFoundError(f"HKOCA_CELLBENDER is set but not a file: {override}")
+        return str(Path(override).resolve())
+
+    env_name = os.environ.get("HKOCA_CELLBENDER_ENV", DEFAULT_CELLBENDER_ENV).strip() or DEFAULT_CELLBENDER_ENV
+    prefix = resolve_env_prefix(env_name, "cellbender")
+    if prefix is not None:
+        exe = prefix / "bin" / "cellbender"
+        logger.info("Using CellBender conda env executable: %s", exe)
+        return str(exe)
+
     exe = shutil.which("cellbender")
     if exe is None:
         raise FileNotFoundError(
-            "cellbender executable not found on PATH. "
-            "Activate the hkoca_cellbender conda env "
-            "(conda/environment_cellbender.yaml)."
+            "cellbender executable not found. Create the hkoca_cellbender conda env "
+            "(conda/environment_cellbender.yaml) or set HKOCA_CELLBENDER."
         )
+
+    logger.warning(
+        "CellBender env '%s' not found; using cellbender on PATH (%s).",
+        env_name,
+        exe,
+    )
     return exe
+
+
+def _subprocess_env_for_cellbender(exe: str) -> dict[str, str] | None:
+    prefix = Path(exe).resolve().parent.parent
+    if (prefix / "bin" / "cellbender").is_file():
+        return subprocess_env_for_prefix(prefix)
+    env_name = os.environ.get("HKOCA_CELLBENDER_ENV", DEFAULT_CELLBENDER_ENV)
+    resolved = resolve_env_prefix(env_name, "cellbender")
+    if resolved is not None:
+        return subprocess_env_for_prefix(resolved)
+    return None
 
 
 def build_jobs(cfg: CellBenderConfig, mode: InputMode) -> list[SampleJob]:
@@ -159,7 +192,11 @@ def run_jobs(
             continue
 
         os.makedirs(job.sample_dir, exist_ok=True)
-        result = subprocess.run(cmd, check=False)
+        result = subprocess.run(
+            cmd,
+            check=False,
+            env=_subprocess_env_for_cellbender(exe),
+        )
         if result.returncode != 0:
             logger.error("[%s] cellbender failed (exit %s)", job.sample_id, result.returncode)
             failed += 1

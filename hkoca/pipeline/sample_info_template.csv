@@ -1,0 +1,2 @@
+data_path,sample_id,study,source,diff_protocol,sc_protocol,sequencing,genome_build,Age,type,sample_dir,run_cellbender,file_prefix
+/path/to/sampleA/raw_feature_bc_matrix.h5,sampleA,MyStudy,LabA,organoid,10x,v3,GRCh38,30,organoid,/path/to/sampleA,True,

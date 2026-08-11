@@ -49,12 +49,44 @@ Override with `HKOCA_QC_ENV` or `HKOCA_RSCRIPT` if needed.
 ```bash
 hkoca --version
 hkoca pipeline --list-stages
+hkoca pipeline --print-template
 hkoca cellbender h5 --help
-hkoca cellbender mtx --help
-hkoca qc-filter --help
-hkoca annotation
-hkoca integration
 ```
+
+### Full pipeline
+
+```bash
+# CellBender -> harmonize/QC -> annotation/integration (stubs skipped with a log)
+hkoca pipeline \
+  --csv sample_info.csv \
+  --gtf genes.gtf \
+  --output /data/out
+
+# Skip CellBender when inputs are already filtered or you use raw counts directly
+hkoca pipeline \
+  --csv sample_info.csv \
+  --gtf genes.gtf \
+  --output /data/out \
+  --skip-cellbender
+
+# Run only through QC
+hkoca pipeline \
+  --csv sample_info.csv \
+  --gtf genes.gtf \
+  --output /data/out \
+  --to-stage qc_filter
+```
+
+The **sample_info CSV** uses the same columns as harmonize metadata, plus optional
+pipeline columns: `sample_dir`, `run_cellbender`, `file_prefix`, `skip`.
+Print the packaged template path with `hkoca pipeline --print-template`.
+
+Outputs are written under `--output`:
+
+- CellBender: `{sample_dir}/{sample_id}_filtered.h5` (when enabled)
+- Harmonize: `{output}/{study}/raw|harmonized|rds/`
+- QC: `{output}/qc_filter/` (or `--qc-output`)
+- Annotation / integration: reserved subdirs (stages not implemented yet)
 
 ### QC-filter
 
