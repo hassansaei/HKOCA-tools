@@ -216,27 +216,63 @@ def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: in
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    from hkoca.annotation.colors import lookup_color, palette_for_obs_key
 
     if "X_umap" not in adata.obsm:
         return
     umap = np.asarray(adata.obsm["X_umap"])
     labels = adata.obs[color_key].astype(str)
-    cats = list(pd.Categorical(labels).categories)
-    cmap = plt.get_cmap("tab20", max(len(cats), 1))
-    colors = {c: cmap(i) for i, c in enumerate(cats)}
+    cats = [c for c in pd.Categorical(labels).categories if (labels == c).any()]
+    palette = palette_for_obs_key(color_key)
+    if palette is not None:
+        colors = {c: lookup_color(c, palette) for c in cats}
+    else:
+        cmap = plt.get_cmap("tab20", max(len(cats), 1))
+        colors = {c: cmap(i) for i, c in enumerate(cats)}
 
-    fig, ax = plt.subplots(figsize=(7, 5.5))
+    fig, ax = plt.subplots(figsize=(8.5, 6.0) if palette is not None else (7, 5.5))
     for c in cats:
         mask = labels == c
-        if not mask.any():
-            continue
-        ax.scatter(umap[mask, 0], umap[mask, 1], s=4, c=[colors[c]], rasterized=True, alpha=0.85)
+        ax.scatter(
+            umap[mask, 0],
+            umap[mask, 1],
+            s=4,
+            c=[colors[c]],
+            rasterized=True,
+            alpha=0.9,
+            label=c,
+        )
     ax.set_title(title)
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
-    fig.tight_layout()
+    if palette is not None and cats:
+        handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[c],
+                markersize=6,
+                label=c,
+            )
+            for c in cats
+        ]
+        ax.legend(
+            handles=handles,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            fontsize=7,
+            frameon=False,
+            title=color_key,
+        )
+        fig.tight_layout(rect=(0, 0, 0.78, 1))
+    else:
+        fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi)
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -257,7 +293,7 @@ def annotate_dataset(
     neighbors_n_pcs: int = 30,
     scale_max_value: float = 10,
     normalize_target_sum: float = 10000,
-    save_plots: bool = False,
+    save_plots: bool = True,
     dpi: int = 150,
     skip_existing: bool = True,
     force: bool = False,
@@ -389,14 +425,14 @@ def annotate_dataset(
         logger.info("  Wrote obs columns: %s", ", ".join(cols))
 
         if save_plots:
-            latest = latest_key_for(resolution)
-            _save_umap_png(
-                adata,
-                latest,
-                figures_dir_p / path.stem / f"umap_{latest}.png",
-                title=f"{path.stem} | {latest}",
-                dpi=dpi,
-            )
+            for col in cols:
+                _save_umap_png(
+                    adata,
+                    col,
+                    figures_dir_p / path.stem / f"umap_{col}.png",
+                    title=f"{path.stem} | {col}",
+                    dpi=dpi,
+                )
 
     # Convenience aliases from the middle / last resolution for downstream tools.
     primary = res_list[1] if len(res_list) >= 2 else res_list[-1]
@@ -464,7 +500,7 @@ def run_annotation_batch(
             neighbors_n_pcs=int(params.get("neighbors_n_pcs", 30)),
             scale_max_value=float(params.get("scale_max_value", 10)),
             normalize_target_sum=float(params.get("normalize_target_sum", 10000)),
-            save_plots=bool(params.get("save_plots", False)),
+            save_plots=bool(params.get("save_plots", True)),
             dpi=int(params.get("dpi", 150)),
             skip_existing=bool(params.get("skip_existing", True)),
             force=force,

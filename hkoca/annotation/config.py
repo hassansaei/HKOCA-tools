@@ -20,7 +20,7 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "neighbors_n_pcs": 30,
     "scale_max_value": 10,
     "normalize_target_sum": 10000,
-    "save_plots": False,
+    "save_plots": True,
     "dpi": 150,
     "skip_existing": True,
 }
@@ -115,12 +115,12 @@ def load_annotation_config(
     paths_raw = dict(raw.get("paths") or {})
     params = {**DEFAULT_PARAMS, **dict(raw.get("parameters") or {})}
     params["resolutions"] = _as_float_list(params.get("resolutions"))
-    params["save_plots"] = _as_bool(params.get("save_plots"), False)
+    params["save_plots"] = _as_bool(params.get("save_plots"), True)
     params["skip_existing"] = _as_bool(params.get("skip_existing"), True)
 
     markers = resolve_path(paths_raw.get("markers"), base) or packaged_markers_path()
     output_dir = resolve_path(paths_raw.get("output_dir"), base) or (base / "annotation_results")
-    annotated_subdir = str(paths_raw.get("annotated_subdir") or "annotated")
+    annotated_subdir = str(paths_raw.get("annotated_subdir") or "annotated_obj")
     clustered_subdir = str(paths_raw.get("clustered_subdir") or "clustered")
     figures_subdir = str(paths_raw.get("figures_subdir") or "figures")
 

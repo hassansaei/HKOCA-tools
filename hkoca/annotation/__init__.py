@@ -85,7 +85,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         "-o",
         default=None,
-        help="Output root (annotated/, clustered/, figures/)",
+        help="Output root (annotated_obj/, clustered/, figures/)",
     )
     p_run.add_argument(
         "--markers",
@@ -111,8 +111,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument(
         "--save-plots",
+        dest="save_plots",
         action="store_true",
-        help="Write UMAP PNGs under figures/",
+        default=None,
+        help="Write UMAP PNGs under figures/ (default: on)",
+    )
+    p_run.add_argument(
+        "--no-save-plots",
+        dest="save_plots",
+        action="store_false",
+        help="Disable UMAP PNG writing",
     )
     p_run.add_argument(
         "--force",
@@ -203,9 +211,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if args.output_dir
         else cfg["output_dir"]
     )
-    annotated_dir = output_root / "annotated"
-    clustered_dir = output_root / "clustered"
-    figures_dir = output_root / "figures"
+    annotated_dir = output_root / Path(cfg["annotated_dir"]).name
+    clustered_dir = output_root / Path(cfg["clustered_dir"]).name
+    figures_dir = output_root / Path(cfg["figures_dir"]).name
 
     if args.input:
         inputs = discover_h5ad_inputs(args.input)
@@ -223,8 +231,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     elif not params.get("resolutions"):
         params["resolutions"] = list(DEFAULT_RESOLUTIONS)
 
-    if args.save_plots:
-        params["save_plots"] = True
+    if args.save_plots is not None:
+        params["save_plots"] = bool(args.save_plots)
     if args.force:
         params["skip_existing"] = False
 

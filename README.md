@@ -119,8 +119,10 @@ hkoca annotation run \
   --markers ./snapseed_markers.yaml
 ```
 
-Outputs under `--output-dir`: `annotated/*_annotated.h5ad`, `clustered/*_clustered.h5ad`,
-optional `figures/`. Each annotated object stores labels for all three resolutions
+Outputs under `--output-dir`: `annotated_obj/*_annotated.h5ad`, `clustered/*_clustered.h5ad`,
+optional `figures/`. UMAP PNGs are written by default per resolution for Leiden
+clusters and each Snapseed level (`Level_1_res…`, `Level_2_res…`, …, `Level_latest_res…`);
+pass `--no-save-plots` to skip. Each annotated object stores labels for all three resolutions
 (`leiden_res_0.4` / `Level_*_res0.4`, etc.).
 
 ### QC-filter
