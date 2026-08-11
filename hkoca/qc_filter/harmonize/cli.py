@@ -53,6 +53,19 @@ def parse_args(argv: list[str] | None = None):
     p.add_argument("--summary-only", action="store_true", help="Skip pipeline, only generate plots")
     p.add_argument("--to-rds", action="store_true", help="Convert harmonized .h5ad to Seurat .rds")
     p.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=True,
+        help="Skip studies whose harmonized RDS (or h5ad) already exists (default: on)",
+    )
+    p.add_argument(
+        "--force",
+        "--force-overwrite",
+        dest="force",
+        action="store_true",
+        help="Re-run even when harmonized outputs already exist",
+    )
+    p.add_argument(
         "--transgenes",
         default=None,
         help="Comma-separated transgenes (overrides [transgenes] names)",
@@ -124,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             working_dir=working_dir,
             to_rds=args.to_rds,
             transgene_names=transgene_names,
+            skip_existing=bool(args.skip_existing and not args.force),
         )
         if failed:
             return 1

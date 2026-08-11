@@ -126,7 +126,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=r"_harmonized\.rds$",
         help="RDS basename regex under harmonize output (default: _harmonized\\.rds$)",
     )
-    parser.add_argument("--force-overwrite", action="store_true", help="Force QC reprocessing")
+    parser.add_argument(
+        "--force-overwrite",
+        "--force",
+        dest="force_overwrite",
+        action="store_true",
+        help="Re-run harmonize and QC even when outputs already exist (default: skip existing)",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=True,
+        help=argparse.SUPPRESS,  # default behavior; kept for compatibility
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print planned steps without running")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     parser.add_argument(
@@ -186,6 +198,15 @@ def main(argv: list[str] | None = None) -> int:
 
     from hkoca.qc_filter.harmonize.cli import main as harmonize_main
     from hkoca.qc_filter.qc_runner import run_qc
+
+    skip_existing = not qc_opts.force_overwrite
+    if skip_existing and "--skip-existing" not in harmonize_argv:
+        harmonize_argv = [*harmonize_argv, "--skip-existing"]
+    if qc_opts.force_overwrite and "--force" not in harmonize_argv:
+        # Harmonize treats missing --skip-existing as re-run; strip if present
+        harmonize_argv = [a for a in harmonize_argv if a != "--skip-existing"]
+
+    logger.info("Skip existing outputs: %s", skip_existing)
 
     if qc_opts.dry_run:
         logger.info("[dry-run] would run harmonize: %s", " ".join(harmonize_argv))

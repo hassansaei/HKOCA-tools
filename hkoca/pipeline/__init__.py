@@ -7,6 +7,9 @@ Chains stage modules in order:
 The sample_info CSV drives CellBender sample selection and harmonization
 metadata. Use ``--skip-cellbender`` or per-row ``run_cellbender=False`` to
 bypass ambient RNA removal.
+
+By default the pipeline resumes: finished stage outputs are detected under
+``--output`` and those steps are skipped. Pass ``--force`` to re-run.
 """
 
 from __future__ import annotations
@@ -68,10 +71,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "  file_prefix      MTX prefix when data_path is a directory\n"
             "  skip             True to exclude a row\n"
             "\n"
+            "resume (default):\n"
+            "  Finished CellBender / harmonize / QC outputs under --output are skipped.\n"
+            "  Use --force to re-run everything.\n"
+            "\n"
             "example:\n"
             "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out\n"
             "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out \\\n"
             "    --skip-cellbender --to-stage qc_filter\n"
+            "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out --force\n"
         ),
     )
     parser.add_argument(
@@ -134,9 +142,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print planned steps without executing them",
     )
     parser.add_argument(
+        "--force",
+        "--force-overwrite",
+        dest="force",
+        action="store_true",
+        help="Re-run stages even when outputs already exist",
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Disable resume checks (same as --force for skip logic)",
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
-        help="Skip CellBender samples whose output H5 already exists",
+        help=argparse.SUPPRESS,  # legacy alias; resume is now the default
     )
     parser.add_argument(
         "--print-template",
@@ -189,10 +209,12 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
+    force = bool(args.force or args.no_resume)
     return run_pipeline(
         cfg,
         dry_run=args.dry_run,
-        skip_existing=args.skip_existing,
+        resume=not force,
+        force=force,
         verbose=args.verbose,
     )
 

@@ -156,7 +156,7 @@ def run_jobs(
     mode: InputMode,
     *,
     dry_run: bool = False,
-    skip_existing: bool = False,
+    skip_existing: bool = True,
 ) -> int:
     exe = "cellbender" if dry_run else find_cellbender()
     jobs = build_jobs(cfg, mode)

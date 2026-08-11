@@ -566,7 +566,8 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
 
 def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
                  working_dir: str, to_rds: bool,
-                 transgene_names: set | None = None) -> list:
+                 transgene_names: set | None = None,
+                 skip_existing: bool = True) -> list:
     allowed_genes = load_allowed_genes(gtf_file)
 
     # Merge user-supplied transgene names into the reference gene set
@@ -613,6 +614,16 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
             out_dir_rds = os.path.join(out_dir, "rds")
             os.makedirs(out_dir_rds, exist_ok=True)
             rds_file = os.path.join(out_dir_rds, f"{study}_harmonized.rds")
+
+        if skip_existing:
+            target = rds_file if to_rds else harmonized_h5ad
+            if target and os.path.isfile(target) and os.path.getsize(target) > 0:
+                logger.info(
+                    "Skipping study %s — output already exists: %s",
+                    study,
+                    target,
+                )
+                continue
 
         # ── Load all samples
         adatas = []

@@ -69,6 +69,14 @@ hkoca pipeline \
   --output /data/out \
   --skip-cellbender
 
+# Resume is the default everywhere (CellBender, harmonize, QC).
+# Finished outputs under --output are skipped. Force a full re-run:
+hkoca pipeline \
+  --csv sample_info.csv \
+  --gtf genes.gtf \
+  --output /data/out \
+  --force
+
 # Run only through QC
 hkoca pipeline \
   --csv sample_info.csv \

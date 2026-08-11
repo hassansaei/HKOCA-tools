@@ -177,7 +177,7 @@ set.seed(1234)
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 # ── 1.7 QC decisions loader ───────────────────────────────────────────────────
-.load_qc_decisions <- function(cfg) {
+.load_qc_decisions <- function(cfg, discovered_names = NULL) {
     qc_decisions <- NULL
     source_label <- NULL
 
@@ -212,33 +212,33 @@ set.seed(1234)
         }
     }
 
-    # 3. FALLBACK: Dynamically generate a MAD3 table across discovered files
+    # 3. FALLBACK: MAD3 defaults for datasets already discovered by the caller
     if (is.null(qc_decisions)) {
         log_warn("No filter criteria provided. Auto-generating global 'mad3' default criteria for discovered datasets.")
-        
-        # Resolve inputs to discover files matching what the pipeline will process
-        in_dir <- if (!is.null(cfg$doublet_subdir) && nzchar(cfg$doublet_subdir)) {
-            # If running standard 'qc' stage standalone, it targets doublet dir
-            file.path(cfg$output_dir %||% getwd(), cfg$doublet_subdir)
-        } else {
-            cfg$rds_dir %||% getwd()
+
+        basenames <- discovered_names
+        if (is.null(basenames) || length(basenames) == 0) {
+            in_dir <- if (exists("DOUBLET_DIR") && dir.exists(DOUBLET_DIR)) {
+                DOUBLET_DIR
+            } else if (!is.null(cfg$doublet_subdir) && nzchar(cfg$doublet_subdir)) {
+                file.path(cfg$output_dir %||% getwd(), cfg$doublet_subdir)
+            } else {
+                cfg$rds_dir %||% getwd()
+            }
+            discovered_paths <- tryCatch({
+                if (exists(".discover_input_rds", mode = "function")) {
+                    unname(unlist(.discover_input_rds(in_dir)))
+                } else {
+                    list.files(in_dir, pattern = "\\.rds$", full.names = TRUE, ignore.case = TRUE)
+                }
+            }, error = function(e) character(0))
+            basenames <- gsub("\\.rds$", "", basename(discovered_paths), ignore.case = TRUE)
         }
-        
-        # Safe detection of available files using existing logic pattern
-        pat <- cfg$rds_pattern %||% "\\.rds$"
-        rec <- .as_bool(cfg$recursive_discovery %||% "FALSE", FALSE)
-        
-        discovered_paths <- tryCatch({
-            list.files(in_dir, pattern = pat, full.names = TRUE, recursive = rec, ignore.case = TRUE)
-        }, error = function(e) character(0))
-        
-        if (length(discovered_paths) == 0) {
+
+        if (length(basenames) == 0) {
             stop("No filters provided and no input RDS files discovered to apply defaults to.")
         }
-        
-        basenames <- gsub(pat, "", basename(discovered_paths), ignore.case = TRUE)
-        
-        # Build a standard data frame matching the expected schema
+
         qc_decisions <- data.frame(
             Dataset_Name         = basenames,
             Lower_Feature_Method = rep("mad3", length(basenames)),
@@ -1158,7 +1158,21 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     log_info(sprintf("Discovered %d RDS files.", length(sample_names)))
     log_info(sprintf("Datasets: %s", paste(sample_names, collapse = ", ")))
 
-    decisions_payload <- .load_qc_decisions(cfg)
+    # Prefer singlet objects when both _singlets and _with_doublet_calls are present
+    singlet_names <- sample_names[grepl("_singlets$", sample_names, ignore.case = TRUE)]
+    if (length(singlet_names) > 0) {
+        drop_calls <- sample_names[grepl("_with_doublet_calls$", sample_names, ignore.case = TRUE)]
+        if (length(drop_calls) > 0) {
+            log_info(sprintf(
+                "QC will use singlet RDS (%d); ignoring with_doublet_calls (%d).",
+                length(singlet_names), length(drop_calls)
+            ))
+            sample_names <- setdiff(sample_names, drop_calls)
+            rds_file_map <- rds_file_map[sample_names]
+        }
+    }
+
+    decisions_payload <- .load_qc_decisions(cfg, discovered_names = sample_names)
     qc_decisions <- decisions_payload$data
     log_info(sprintf("Loaded QC decisions from %s", decisions_payload$source))
 

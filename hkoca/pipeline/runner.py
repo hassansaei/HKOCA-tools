@@ -1,10 +1,15 @@
-"""Run HKOCA pipeline stages in order."""
+"""Run HKOCA pipeline stages in order with resume support."""
 
 from __future__ import annotations
 
 import logging
 import os
 
+from hkoca.pipeline.checkpoints import (
+    cellbender_complete,
+    harmonize_complete,
+    qc_stage_complete,
+)
 from hkoca.pipeline.config import (
     PipelineConfig,
     load_sample_info,
@@ -18,12 +23,21 @@ from hkoca.pipeline.config import (
 logger = logging.getLogger("hkoca.pipeline")
 
 
+def _cellbender_suffix(cfg: PipelineConfig) -> str:
+    from hkoca.cellbender.config import default_config_path, resolve_config as resolve_cellbender_config
+
+    return resolve_cellbender_config(
+        default_config_path(cfg.cellbender_config or None)
+    ).output_suffix
+
+
 def run_cellbender_stage(
     cfg: PipelineConfig,
     df,
     *,
     dry_run: bool = False,
-    skip_existing: bool = False,
+    resume: bool = True,
+    force: bool = False,
 ) -> tuple[int, set[str]]:
     from hkoca.cellbender.config import default_config_path, resolve_config as resolve_cellbender_config
     from hkoca.cellbender.runner import run_jobs
@@ -31,6 +45,16 @@ def run_cellbender_stage(
     if not cfg.run_cellbender:
         logger.info("CellBender stage skipped (--skip-cellbender or run_cellbender=false).")
         return 0, set()
+
+    suffix = _cellbender_suffix(cfg)
+    done, missing, done_ids = cellbender_complete(cfg, df, output_suffix=suffix)
+
+    if resume and not force and done:
+        logger.info(
+            "CellBender stage already complete (%d sample output(s)); skipping.",
+            len(done_ids),
+        )
+        return 0, done_ids
 
     samples: list[str] = []
     for _, row in df.iterrows():
@@ -43,6 +67,12 @@ def run_cellbender_stage(
         logger.info("No samples marked for CellBender; skipping stage.")
         return 0, set()
 
+    if missing and resume and not force:
+        logger.info(
+            "CellBender resume: %d sample(s) still missing; will skip existing outputs.",
+            len(missing),
+        )
+
     cb_cfg = resolve_cellbender_config(
         default_config_path(cfg.cellbender_config or None),
         working_dir=cfg.working_dir,
@@ -53,20 +83,33 @@ def run_cellbender_stage(
         cb_cfg,
         cfg.cellbender_mode,
         dry_run=dry_run,
-        skip_existing=skip_existing,
+        skip_existing=resume and not force,
     )
-    ran_ids = {str(row["sample_id"]).strip() for _, row in df.iterrows() if sample_runs_cellbender(row, run_cellbender_stage=True)}
-    return rc, ran_ids if rc == 0 else set()
+    if rc != 0:
+        return rc, set()
+
+    _, _, done_ids = cellbender_complete(cfg, df, output_suffix=suffix)
+    return 0, done_ids
 
 
 def run_qc_filter_stage(
     cfg: PipelineConfig,
+    df,
     harmonize_csv: str,
     *,
     dry_run: bool = False,
     verbose: bool = False,
+    resume: bool = True,
+    force: bool = False,
 ) -> int:
     from hkoca.qc_filter import main as qc_filter_main
+
+    if resume and not force:
+        ok, reason = qc_stage_complete(cfg, df)
+        if ok:
+            logger.info("QC-filter stage already complete (%s); skipping.", reason)
+            return 0
+        logger.info("QC-filter resume: %s", reason)
 
     qc_output = qc_output_dir(cfg)
     argv = [
@@ -81,6 +124,9 @@ def run_qc_filter_stage(
         argv.append("--dry-run")
     if verbose:
         argv.append("-v")
+    if force:
+        argv.append("--force-overwrite")
+    # qc-filter skips existing by default; do not pass a redundant flag
 
     argv.extend(
         [
@@ -135,18 +181,22 @@ def run_pipeline(
     cfg: PipelineConfig,
     *,
     dry_run: bool = False,
-    skip_existing: bool = False,
+    resume: bool = True,
+    force: bool = False,
     verbose: bool = False,
 ) -> int:
     stages = stages_in_range(cfg.from_stage, cfg.to_stage)
     logger.info("Pipeline stages: %s", " -> ".join(stages))
     logger.info("Sample info CSV: %s", cfg.sample_info_csv)
     logger.info("Output root: %s", cfg.output_root)
+    logger.info("Resume: %s | force: %s", resume and not force, force)
 
     df = load_sample_info(cfg.sample_info_csv)
     work_dir = os.path.join(cfg.output_root, ".hkoca")
+    os.makedirs(work_dir, exist_ok=True)
     harmonize_csv = os.path.join(work_dir, "harmonize_metadata.csv")
     cellbender_sample_ids: set[str] = set()
+    suffix = _cellbender_suffix(cfg)
 
     total = len(stages)
     for idx, stage in enumerate(stages, start=1):
@@ -158,7 +208,8 @@ def run_pipeline(
                 cfg,
                 df,
                 dry_run=dry_run,
-                skip_existing=skip_existing,
+                resume=resume,
+                force=force,
             )
             if rc != 0:
                 logger.error("CellBender stage failed; stopping pipeline.")
@@ -166,18 +217,41 @@ def run_pipeline(
             continue
 
         if stage == "qc_filter":
-            from hkoca.cellbender.config import default_config_path, resolve_config as resolve_cellbender_config
+            # If CellBender was not in this run range, still prefer filtered H5
+            # paths when those outputs already exist.
+            if not cellbender_sample_ids and cfg.run_cellbender:
+                _, _, cellbender_sample_ids = cellbender_complete(
+                    cfg, df, output_suffix=suffix
+                )
 
-            cb_cfg = resolve_cellbender_config(default_config_path(cfg.cellbender_config or None))
+            if resume and not force:
+                harm_ok, harm_missing = harmonize_complete(cfg.output_root, df)
+                if harm_ok:
+                    logger.info("Harmonize outputs already present under %s/rds/", cfg.output_root)
+                else:
+                    logger.info(
+                        "Harmonize resume: %d study output(s) missing (e.g. %s)",
+                        len(harm_missing),
+                        harm_missing[0],
+                    )
+
             write_harmonize_csv(
                 df,
                 harmonize_csv,
                 working_dir=cfg.working_dir,
-                output_suffix=cb_cfg.output_suffix,
+                output_suffix=suffix,
                 cellbender_sample_ids=cellbender_sample_ids,
             )
             logger.info("Harmonize metadata written: %s", harmonize_csv)
-            rc = run_qc_filter_stage(cfg, harmonize_csv, dry_run=dry_run, verbose=verbose)
+            rc = run_qc_filter_stage(
+                cfg,
+                df,
+                harmonize_csv,
+                dry_run=dry_run,
+                verbose=verbose,
+                resume=resume,
+                force=force,
+            )
             if rc != 0:
                 logger.error("QC-filter stage failed; stopping pipeline.")
                 return rc

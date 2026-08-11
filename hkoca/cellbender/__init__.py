@@ -120,7 +120,15 @@ def _add_shared_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--skip-existing",
         action="store_true",
-        help="Skip samples whose output H5 already exists",
+        default=True,
+        help="Skip samples whose output H5 already exists (default: on)",
+    )
+    p.add_argument(
+        "--force",
+        "--force-overwrite",
+        dest="force",
+        action="store_true",
+        help="Re-run even when CellBender output H5 already exists",
     )
     p.add_argument(
         "-v",
@@ -173,7 +181,7 @@ def _run_mode(mode: InputMode, argv: Sequence[str] | None) -> int:
         cfg,
         mode,
         dry_run=args.dry_run,
-        skip_existing=args.skip_existing,
+        skip_existing=bool(args.skip_existing and not args.force),
     )
 
 
