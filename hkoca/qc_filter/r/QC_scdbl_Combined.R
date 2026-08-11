@@ -212,9 +212,9 @@ set.seed(1234)
         }
     }
 
-    # 3. FALLBACK: MAD3 defaults for datasets already discovered by the caller
+    # 3. FALLBACK: default methods for datasets already discovered by the caller
     if (is.null(qc_decisions)) {
-        log_warn("No filter criteria provided. Auto-generating global 'mad3' default criteria for discovered datasets.")
+        log_warn("No filter criteria provided. Auto-generating defaults: lower_tri / mad3 / mito mad3.")
 
         basenames <- discovered_names
         if (is.null(basenames) || length(basenames) == 0) {
@@ -241,14 +241,14 @@ set.seed(1234)
 
         qc_decisions <- data.frame(
             Dataset_Name         = basenames,
-            Lower_Feature_Method = rep("mad3", length(basenames)),
+            Lower_Feature_Method = rep("lower_tri", length(basenames)),
             Upper_Feature_Method = rep("mad3", length(basenames)),
-            Lower_Count_Method   = rep("mad3", length(basenames)),
+            Lower_Count_Method   = rep("lower_tri", length(basenames)),
             Upper_Count_Method   = rep("mad3", length(basenames)),
             Upper_Mito_Method    = rep("mad3", length(basenames)),
             stringsAsFactors     = FALSE
         )
-        source_label <- "pipeline_default: dynamic MAD3 auto-generation"
+        source_label <- "pipeline_default: lower_tri + mad3 auto-generation"
     }
 
     if (!("Dataset_Name" %in% colnames(qc_decisions))) {
@@ -815,7 +815,7 @@ log_info("═══════════════════════�
 log_info(sprintf("QC PIPELINE START  [run: %s]", QC_RUN))
 log_info(sprintf("  Config       : %s", config_path))
 log_info(sprintf("  Raw RDS dir  : %s", rds_dir))
-decisions_src_display <- "pipeline_default: dynamic MAD3 auto-generation"
+decisions_src_display <- "pipeline_default: lower_tri + mad3 auto-generation"
 if (!is.null(cfg$filters) && nzchar(trimws(cfg$filters))) {
     decisions_src_display <- sprintf("file: %s", trimws(cfg$filters))
 } else if (!is.null(cfg$qc_decisions_table) && nzchar(trimws(cfg$qc_decisions_table))) {
