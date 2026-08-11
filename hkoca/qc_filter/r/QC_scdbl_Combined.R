@@ -216,7 +216,7 @@ set.seed(1234)
     if (is.null(qc_decisions)) {
         log_warn(paste(
             "No filter criteria provided. Auto-generating mad3 defaults:",
-            "nFeature/nCount = log1p MAD (5 MADs); mito = raw MAD (3 MADs)."
+            "nFeature/nCount = log1p MAD (3 MADs); mito = raw MAD (3 MADs)."
         ))
 
         basenames <- discovered_names
@@ -914,8 +914,7 @@ log_info("==================================================")
 # -- MAD threshold (scverse / Germain-style) -----------------------------------
 # Library-size metrics (nFeature, nCount): MAD on log1p, then expm1 back.
 # Percent metrics (mito): MAD on the raw percentage (no log1p).
-# method "mad3" on feature/count uses nmads=5 (best-practice default);
-# explicit mad5/mad4/... honor the digit. Mito always uses the digit (mad3 -> 3).
+# madN uses N median absolute deviations (mad3 -> 3 MADs).
 .thresh_mad <- function(values, bound = "lower", nmads = 3, use_log = FALSE) {
     values <- values[is.finite(values)]
     if (length(values) == 0) return(if (bound == "upper") Inf else 0)
@@ -940,10 +939,6 @@ log_info("==================================================")
 .mad_nmads <- function(method_str, metric = "generic") {
     nmads <- suppressWarnings(as.numeric(sub("^mad", "", method_str)))
     if (!is.finite(nmads) || nmads <= 0) nmads <- 3
-    # Plain "mad3" on library-size metrics follows scverse (5 MADs on log1p).
-    if (identical(method_str, "mad3") && metric %in% c("feature", "count")) {
-        return(5)
-    }
     nmads
 }
 
@@ -1287,7 +1282,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
         filtered_path <- file.path(FILTERED_DIR, paste0(nm, "_filtered.rds"))
         current_qc_params <- as.list(row_cfg)
         # Invalidate old raw-MAD mad3 checkpoints after log1p MAD change.
-        current_qc_params$mad_scale <- "log1p_library_raw_mito_v1"
+        current_qc_params$mad_scale <- "log1p_library_raw_mito_mad3_v2"
 
         if (.should_skip_run(filtered_path, current_qc_params, cfg$force_overwrite)) {
             log_info(sprintf("[QC SKIPPED] %s already processed with identical thresholds.", nm))
