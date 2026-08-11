@@ -594,20 +594,20 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
         logger.info(f"Processing study: {study} ({len(rows)} sample(s))")
 
         if output_root:
-            out_dir = os.path.join(output_root, study)
+            out_dir = output_root
         else:
             out_dir = str(rows[0].get("output_dir", study)).strip() or study
             if out_dir and not os.path.isabs(out_dir):
                 out_dir = os.path.normpath(os.path.join(working_dir, out_dir))
-        
+
         out_dir_raw  = os.path.join(out_dir, "raw")
         out_dir_harm = os.path.join(out_dir, "harmonized")
         os.makedirs(out_dir_raw,  exist_ok=True)
         os.makedirs(out_dir_harm, exist_ok=True)
-        
+
         raw_h5ad        = os.path.join(out_dir_raw,  f"{study}.h5ad")
         harmonized_h5ad = os.path.join(out_dir_harm, f"{study}_harmonized.h5ad")
-        rds_file: str | None = None  # assigned below only when to_rds=True
+        rds_file: str | None = None
 
         if to_rds:
             out_dir_rds = os.path.join(out_dir, "rds")

@@ -310,6 +310,27 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     mapping
 }
 
+# Harmonize writes <output_root>/<study>/rds/*_harmonized.rds — search recursively
+# from output_root. Stage output dirs (doublet_filtered_rds, etc.) are flat.
+.is_harmonized_rds_root <- function(input_dir) {
+    identical(
+        normalizePath(input_dir, mustWork = FALSE),
+        normalizePath(rds_dir, mustWork = FALSE)
+    )
+}
+
+.discover_input_rds <- function(input_dir) {
+    if (.is_harmonized_rds_root(input_dir)) {
+        log_info(sprintf(
+            "  RDS discovery: recursive=%s, pattern=%s",
+            recursive_discovery, rds_pattern
+        ))
+        discover_rds_files(input_dir, pattern = rds_pattern, recursive = recursive_discovery)
+    } else {
+        discover_rds_files(input_dir, pattern = "\\.rds$", recursive = FALSE)
+    }
+}
+
 # Strip common harmonize / QC suffixes for consistent sample lookup.
 .canon_sample_name <- function(x) {
     s <- tolower(trimws(as.character(x)))
@@ -1132,7 +1153,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     log_info("STAGE 2: QC FILTERING")
     log_info("──────────────────────────────────────────────────")
 
-    rds_file_map <- discover_rds_files(qc_input_dir, pattern = rds_pattern, recursive = recursive_discovery)
+    rds_file_map <- .discover_input_rds(qc_input_dir)
     sample_names <- sort(names(rds_file_map))
     log_info(sprintf("Discovered %d RDS files.", length(sample_names)))
     log_info(sprintf("Datasets: %s", paste(sample_names, collapse = ", ")))
@@ -1809,7 +1830,8 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
     log_info(sprintf("  Output : %s", DOUBLET_DIR))
     log_info("──────────────────────────────────────────────────")
 
-    filtered_files <- list.files(doublet_input_dir, pattern = "\\.rds$", full.names = TRUE)
+    rds_map <- .discover_input_rds(doublet_input_dir)
+    filtered_files <- unname(unlist(rds_map))
     if (length(filtered_files) == 0)
         stop(sprintf("No input RDS files found in: %s", doublet_input_dir))
 

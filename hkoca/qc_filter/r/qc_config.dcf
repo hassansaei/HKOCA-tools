@@ -2,8 +2,9 @@
 # Used by: hkoca qc-filter
 # CLI flags override matching values in this file.
 
-# Directory of input Seurat .rds files.
-# For hkoca qc-filter this is overridden to the harmonize output_root.
+# Directory of input Seurat .rds files (harmonize output_root).
+# Harmonize layout: <output_root>/rds/<study>_harmonized.rds
+# QC outputs (Summary, doublet_filtered_rds, qc_filtered_rds) are flat under output_dir.
 rds_dir:
 
 # Base directory for QC outputs (Summary, filtered RDS, logs).
