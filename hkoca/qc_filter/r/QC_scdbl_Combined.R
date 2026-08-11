@@ -1443,7 +1443,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                                                    show_cutoffs = FALSE)
 
                     ggsave(file.path(QC_DIR, nm, paste0("Violin_qc.raw.by_sample.",      feat, ".png")),
-                           p.v.bs,   width = violin_width_grp, height = PLOT_HEIGHT, dpi = PLOT_DPI, bg = PLOT_BG))
+                           p.v.bs,   width = violin_width_grp, height = PLOT_HEIGHT, dpi = PLOT_DPI, bg = PLOT_BG)
                     ggsave(file.path(QC_DIR, nm, paste0("Plot_qc.raw.by_sample.",        feat, ".png")),
                            p.s.bs,   width = scatter_facet_w,  height = scatter_facet_h, dpi = PLOT_DPI, bg = PLOT_BG)
                     ggsave(file.path(QC_DIR, nm, paste0("Violin_qc.filtered.by_sample.", feat, ".png")),

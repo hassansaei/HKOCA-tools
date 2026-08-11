@@ -124,6 +124,7 @@ def setup_logging(working_dir: str):
         logger.handlers.clear()
 
     logger.setLevel(logging.DEBUG)
+    logger.propagate = False
     
     # 1. Console Handler (Clean, INFO level)
     ch = logging.StreamHandler(sys.stdout)

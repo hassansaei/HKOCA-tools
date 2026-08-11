@@ -43,13 +43,19 @@ def config_template_path() -> Path:
 
 def _setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-        force=True,
+    if logger.handlers:
+        logger.handlers.clear()
+    logger.setLevel(level)
+    logger.propagate = False
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
     )
+    logger.addHandler(handler)
 
 
 def _ensure_to_rds(harmonize_argv: list[str]) -> list[str]:
