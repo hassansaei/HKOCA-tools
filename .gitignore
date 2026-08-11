@@ -1,6 +1,8 @@
+*.egg-info/
+**/*.egg-info/
 __pycache__/
 *.py[cod]
-*.log
-*.sif
-.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .DS_Store
