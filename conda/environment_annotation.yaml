@@ -19,5 +19,7 @@ dependencies:
   - pyyaml
   - numba
   - scikit-learn
+  - python-igraph
+  - leidenalg
   - pip:
       - git+https://github.com/hassansaei/snapseed.git

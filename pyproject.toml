@@ -43,6 +43,8 @@ annotation = [
   "pyyaml",
   "numba",
   "scikit-learn",
+  "igraph",
+  "leidenalg",
   "snapseed @ git+https://github.com/hassansaei/snapseed.git",
 ]
 

@@ -265,7 +265,23 @@ def annotate_dataset(
     """Cluster at each resolution, run Snapseed, write annotated (+ optional clustered) h5ad."""
     import anndata as ad
     import scanpy as sc
-    import snapseed
+
+    try:
+        import snapseed
+    except ImportError as exc:
+        raise ImportError(
+            "Snapseed is required for annotation. Install with: "
+            "pip install -U git+https://github.com/hassansaei/snapseed.git"
+        ) from exc
+
+    try:
+        import igraph  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "python-igraph is required for Leiden clustering. Install with: "
+            "conda install -c conda-forge python-igraph leidenalg "
+            "or: pip install igraph leidenalg"
+        ) from exc
 
     path = Path(file_path).expanduser().resolve()
     out_dir = Path(output_dir).expanduser().resolve()

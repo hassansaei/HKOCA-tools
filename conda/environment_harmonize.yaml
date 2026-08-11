@@ -23,6 +23,9 @@ dependencies:
   - pyyaml
   - numba
   - scikit-learn
+  # Leiden clustering (sc.tl.leiden / Snapseed)
+  - python-igraph
+  - leidenalg
 
   # R bridge for --to-rds (Seurat export consumed by QC)
   - r-base>=4.2
