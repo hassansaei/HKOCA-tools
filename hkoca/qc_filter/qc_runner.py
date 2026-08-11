@@ -90,7 +90,7 @@ def build_qc_command(
     rds_dir: str,
     output_dir: str,
     config: str | None = None,
-    stage: str = "all",
+    run: str = "all",
     recursive: bool = True,
     rds_pattern: str = r"_harmonized\.rds$",
     force_overwrite: bool = False,
@@ -103,8 +103,8 @@ def build_qc_command(
         script,
         "--config",
         cfg,
-        "--stage",
-        stage,
+        "--run",
+        run,
         "--rds_dir",
         os.path.abspath(rds_dir),
         "--output_dir",
@@ -126,7 +126,7 @@ def run_qc(
     rds_dir: str,
     output_dir: str,
     config: str | None = None,
-    stage: str = "all",
+    run: str = "all",
     recursive: bool = True,
     rds_pattern: str = r"_harmonized\.rds$",
     force_overwrite: bool = False,
@@ -142,7 +142,7 @@ def run_qc(
             rds_dir=rds_dir,
             output_dir=output_dir,
             config=config,
-            stage=stage,
+            run=run,
             recursive=recursive,
             rds_pattern=rds_pattern,
             force_overwrite=force_overwrite,
@@ -165,5 +165,5 @@ def run_qc(
     if result.returncode != 0:
         logger.error("QC R script failed (exit %s)", result.returncode)
         return result.returncode
-    logger.info("QC stage completed. Outputs under: %s", output_dir)
+    logger.info("QC run completed. Outputs under: %s", output_dir)
     return 0

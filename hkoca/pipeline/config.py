@@ -33,7 +33,7 @@ class PipelineConfig:
     qc_config: str
     qc_output: str
     qc_output_subdir: str
-    qc_stage: str
+    qc_run: str
     annotation_output_subdir: str
     integration_output_subdir: str
     config_path: str
@@ -103,7 +103,7 @@ def resolve_config(
     qc_config: str | None = None,
     qc_output: str | None = None,
     qc_output_subdir: str | None = None,
-    qc_stage: str | None = None,
+    qc_run: str | None = None,
 ) -> PipelineConfig:
     cfg = load_config_file(config_path)
 
@@ -152,7 +152,7 @@ def resolve_config(
         qc_config=path_val(qc_config, "qc", "config"),
         qc_output=abs_path(path_val(qc_output, "qc", "output_dir")),
         qc_output_subdir=path_val(qc_output_subdir, "qc", "output_subdir") or "qc_filter",
-        qc_stage=path_val(qc_stage, "qc", "stage") or "all",
+        qc_run=path_val(qc_run, "qc", "run") or "all",
         annotation_output_subdir=_get(cfg, "annotation", "output_subdir", "annotation"),
         integration_output_subdir=_get(cfg, "integration", "output_subdir", "integration"),
         config_path=config_path,

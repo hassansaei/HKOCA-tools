@@ -10,7 +10,7 @@ Upstream CellBender is optional.
 CLI::
 
     hkoca qc-filter --csv meta.csv --gtf genes.gtf --output results \\
-      --qc-output results/qc_filter --stage all
+      --qc-output results/qc_filter --run all
 
 Environments
 ------------
@@ -102,7 +102,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "\n"
             "example:\n"
             "  hkoca qc-filter --csv meta.csv --gtf genes.gtf --output results \\\n"
-            "    --qc-output results/qc_filter --stage all\n"
+            "    --qc-output results/qc_filter --run all\n"
         ),
     )
     parser.add_argument(
@@ -116,10 +116,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="QC output directory (default: <harmonize-output>/qc_filter)",
     )
     parser.add_argument(
-        "--stage",
+        "--run",
         default="all",
         choices=["all", "qc", "doublet"],
-        help="QC R stage to run after harmonization (default: all)",
+        help="QC R substeps to run after harmonization: all, doublet only, or qc only (default: all)",
     )
     parser.add_argument(
         "--rds-pattern",
@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         rds_dir=output_root,
         output_dir=qc_output,
         config=qc_opts.qc_config,
-        stage=qc_opts.stage,
+        run=qc_opts.run,
         recursive=True,
         rds_pattern=qc_opts.rds_pattern,
         force_overwrite=qc_opts.force_overwrite,

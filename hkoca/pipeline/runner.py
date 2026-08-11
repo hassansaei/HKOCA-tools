@@ -72,8 +72,8 @@ def run_qc_filter_stage(
     argv = [
         "--qc-output",
         qc_output,
-        "--stage",
-        cfg.qc_stage,
+        "--run",
+        cfg.qc_run,
     ]
     if cfg.qc_config:
         argv.extend(["--qc-config", cfg.qc_config])

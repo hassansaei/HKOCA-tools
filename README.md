@@ -94,7 +94,7 @@ Outputs are written under `--output`:
 # Always: harmonize (--to-rds) then doublet detection + QC
 hkoca qc-filter \
   --csv meta.csv --gtf genes.gtf --output results \
-  --qc-output results/qc_filter --stage all
+  --qc-output results/qc_filter --run all
 ```
 
 ### CellBender quick start

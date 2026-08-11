@@ -11,7 +11,7 @@
 # (paths, doublet tuning, per-sample platform/chemistry/dbr overrides, etc).
 #
 # Usage:
-#   Rscript QC_scdbl_Combined.R [--config PATH] [--stage all|qc|doublet] [OPTIONS]
+#   Rscript QC_scdbl_Combined.R [--config PATH] [--run all|qc|doublet] [OPTIONS]
 #
 # Run with --help for the full list of CLI flags.
 # =============================================================================
@@ -333,11 +333,11 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
         "QC_scdbl_Combined.R"
     }
     cat("Usage:\n")
-    cat(sprintf("  Rscript %s [--config PATH] [--stage all|qc|doublet] [OPTIONS]\n\n", script_name))
+    cat(sprintf("  Rscript %s [--config PATH] [--run all|qc|doublet] [OPTIONS]\n\n", script_name))
     cat("Options:\n")
     cat(sprintf("  --config PATH            Config DCF file (default: %s)\n", default_config))
     cat("  --filters PATH           Path to an external CSV file for QC cutoffs\n")
-    cat("  --stage STR              all | qc | doublet  (default: all)\n")
+    cat("  --run STR                all | qc | doublet  (default: all)\n")
     cat("  --rds_dir PATH           Override raw RDS input directory\n")
     cat("  --output_dir PATH        Override output base directory\n")
     cat("  --summary_subdir NAME    Override QC summary subdirectory\n")
@@ -693,15 +693,17 @@ config_path <- if (!is.null(cli_args$config)) .resolve_path(cli_args$config, get
 cfg         <- .read_config_dcf(config_path)
 
 # CLI overrides win over config file
-for (nm in setdiff(names(cli_args), c("config", "help", "stage"))) cfg[[nm]] <- cli_args[[nm]]
+for (nm in setdiff(names(cli_args), c("config", "help", "run", "stage"))) cfg[[nm]] <- cli_args[[nm]]
 
-# Stage selection
-RUN_STAGE <- tolower(cli_args$stage %||% "all")
-if (!RUN_STAGE %in% c("all", "qc", "doublet"))
-    stop(sprintf("Invalid --stage '%s'. Choose: all | qc | doublet", RUN_STAGE))
+if (!is.null(cli_args$stage) && (is.null(cli_args$run) || !nzchar(cli_args$run)))
+    message("Note: --stage is deprecated; use --run (all | qc | doublet)")
 
-RUN_QC      <- RUN_STAGE %in% c("all", "qc")
-RUN_DOUBLET <- RUN_STAGE %in% c("all", "doublet")
+QC_RUN <- tolower(cli_args$run %||% cli_args$stage %||% "all")
+if (!QC_RUN %in% c("all", "qc", "doublet"))
+    stop(sprintf("Invalid --run '%s'. Choose: all | qc | doublet", QC_RUN))
+
+RUN_QC      <- QC_RUN %in% c("all", "qc")
+RUN_DOUBLET <- QC_RUN %in% c("all", "doublet")
 
 # ── Resolve all paths ─────────────────────────────────────────────────────────
 rds_dir         <- .resolve_path(cfg$rds_dir       %||% NULL,             getwd())
@@ -789,7 +791,7 @@ if (RUN_H5AD) dir.create(H5AD_DIR, recursive = TRUE, showWarnings = FALSE)
 run_ts <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
 log_info("══════════════════════════════════════════════════")
-log_info(sprintf("QC PIPELINE START  [stage: %s]", RUN_STAGE))
+log_info(sprintf("QC PIPELINE START  [run: %s]", QC_RUN))
 log_info(sprintf("  Config       : %s", config_path))
 log_info(sprintf("  Raw RDS dir  : %s", rds_dir))
 decisions_src_display <- "pipeline_default: dynamic MAD3 auto-generation"
@@ -2534,7 +2536,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
 # ── Stage execution dispatcher ─────────────────────────────────────────────────
 reverse_mode_run <- .as_bool(cfg$reverse_mode %||% "TRUE", TRUE)
 
-if (RUN_STAGE == "all") {
+if (QC_RUN == "all") {
     if (reverse_mode_run) {
         .run_stage_doublet(doublet_input_dir = rds_dir)
         .run_stage_qc(qc_input_dir = DOUBLET_DIR)
@@ -2542,17 +2544,17 @@ if (RUN_STAGE == "all") {
         .run_stage_qc(qc_input_dir = rds_dir)
         .run_stage_doublet(doublet_input_dir = FILTERED_DIR)
     }
-} else if (RUN_STAGE == "qc") {
+} else if (QC_RUN == "qc") {
     .run_stage_qc(qc_input_dir = if (reverse_mode_run) DOUBLET_DIR else rds_dir)
-} else if (RUN_STAGE == "doublet") {
+} else if (QC_RUN == "doublet") {
     .run_stage_doublet(doublet_input_dir = if (reverse_mode_run) rds_dir else FILTERED_DIR)
 }
 
 # ── Optional Stage: H5AD conversion ───────────────────────────────────────────
 if (RUN_H5AD) {
-    h5ad_input_dir <- if (RUN_STAGE == "qc") {
+    h5ad_input_dir <- if (QC_RUN == "qc") {
         FILTERED_DIR
-    } else if (RUN_STAGE == "doublet") {
+    } else if (QC_RUN == "doublet") {
         DOUBLET_DIR
     } else if (reverse_mode_run) {
         FILTERED_DIR
@@ -2568,7 +2570,7 @@ if (RUN_H5AD) {
 
 log_info("══════════════════════════════════════════════════")
 log_info("PIPELINE COMPLETE")
-log_info(sprintf("  Stage run    : %s", RUN_STAGE))
+log_info(sprintf("  QC run     : %s", QC_RUN))
 log_info(sprintf("  Output base  : %s", BASE_OUT_DIR))
 if (RUN_QC)      log_info(sprintf("  QC audit PDF : %s", file.path(QC_DIR,              "QC_Before_After_Report.pdf")))
 if (RUN_QC)      log_info(sprintf("  QC dashboard : %s", file.path(QC_DIR,              "summary_qc_full_dashboard.png")))
@@ -3098,7 +3100,7 @@ if (!has_qc_summary && !has_dbl_summary) {
 
 log_info("══════════════════════════════════════════════════")
 log_info("ALL SECTIONS COMPLETE")
-log_info(sprintf("  Stage run         : %s", RUN_STAGE))
+log_info(sprintf("  QC run            : %s", QC_RUN))
 log_info(sprintf("  Output base       : %s", BASE_OUT_DIR))
 if (RUN_QC)      log_info(sprintf("  QC audit PDF      : %s", file.path(QC_DIR,              "QC_Before_After_Report.pdf")))
 if (RUN_QC)      log_info(sprintf("  QC dashboard      : %s", file.path(QC_DIR,              "summary_qc_full_dashboard.png")))
