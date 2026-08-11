@@ -15,6 +15,25 @@ from hkoca.annotation.config import load_marker_hierarchy
 
 logger = logging.getLogger("hkoca.annotation")
 
+_UNASSIGNED_TOKENS = {"", "unassigned", "nan", "none", "na", "null"}
+
+
+def _suppress_annotation_warnings() -> None:
+    """Quiet noisy third-party warnings during clustering / Snapseed / plotting."""
+    import warnings
+
+    warnings.filterwarnings("ignore", category=UserWarning)
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", message=".*h5py is running against HDF5.*")
+    warnings.filterwarnings("ignore", message=".*zero-centering a sparse.*")
+    try:
+        from anndata import ImplicitModificationWarning
+
+        warnings.filterwarnings("ignore", category=ImplicitModificationWarning)
+    except Exception:
+        pass
+
 
 def resolution_tag(resolution: float) -> str:
     """Stable tag for filenames / obs keys, e.g. 0.4 -> '0.4', 1.0 -> '1.0'."""
@@ -183,6 +202,109 @@ def _apply_manual_overrides(
     return assignments
 
 
+def _is_missing_label(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip().lower() in _UNASSIGNED_TOKENS
+
+
+def _propagate_parent_labels(assignments: pd.DataFrame) -> pd.DataFrame:
+    """If a deeper level is missing/Unassigned, copy the parent level label.
+
+    Matches the notebook pattern:
+        level_3.fillna(level_2); level_3.fillna(level_1)
+    """
+    out = assignments.copy()
+    cols = list(out.columns)
+    for i in range(1, len(cols)):
+        parent, child = cols[i - 1], cols[i]
+        missing = out[child].map(_is_missing_label)
+        out.loc[missing, child] = out.loc[missing, parent]
+    for col in cols:
+        missing = out[col].map(_is_missing_label)
+        out.loc[missing, col] = "Unassigned"
+    return out
+
+
+def _metric_frame_for_level(level_df: pd.DataFrame, group_name: str) -> pd.DataFrame:
+    """Normalize one Snapseed metrics level to index=cluster with score/auc/expr."""
+    df = level_df.copy()
+    if group_name not in df.columns:
+        df = df.reset_index()
+    # annotate() resets index as group_name; tolerate alternate names.
+    if group_name not in df.columns:
+        for cand in ("index", "group", "cluster"):
+            if cand in df.columns:
+                df = df.rename(columns={cand: group_name})
+                break
+    if group_name not in df.columns:
+        raise KeyError(f"Snapseed metrics level is missing group column '{group_name}'")
+    df[group_name] = df[group_name].astype(str)
+    df = df.drop_duplicates(subset=[group_name], keep="last").set_index(group_name)
+    keep = [c for c in ("class", "score", "auc", "expr") if c in df.columns]
+    return df[keep]
+
+
+def _assignments_with_scores(
+    assignments: pd.DataFrame,
+    metrics: dict[str, Any],
+    group_name: str,
+) -> pd.DataFrame:
+    """Attach per-level Snapseed confidence metrics (score/auc/expr) to assignments.
+
+    Snapseed returns::
+        results['metrics']['level_k'] with columns [group, class, score, auc, expr]
+    """
+    label_cols = list(assignments.columns)
+    out = assignments.copy()
+    out.index = out.index.astype(str)
+
+    for level_key, level_df in (metrics or {}).items():
+        if level_df is None or getattr(level_df, "empty", True):
+            continue
+        try:
+            m = _metric_frame_for_level(level_df, group_name)
+        except Exception as exc:
+            logger.warning("Could not parse Snapseed metrics for %s: %s", level_key, exc)
+            continue
+        for metric_col in ("score", "auc", "expr"):
+            if metric_col not in m.columns:
+                continue
+            out[f"{level_key}_{metric_col}"] = pd.to_numeric(
+                m[metric_col].reindex(out.index), errors="coerce"
+            )
+
+    # When a child label was filled from the parent, reuse parent confidence too.
+    for i in range(1, len(label_cols)):
+        parent, child = label_cols[i - 1], label_cols[i]
+        for metric_col in ("score", "auc", "expr"):
+            parent_m = f"{parent}_{metric_col}"
+            child_m = f"{child}_{metric_col}"
+            if parent_m not in out.columns:
+                continue
+            if child_m not in out.columns:
+                out[child_m] = np.nan
+            missing_score = out[child_m].isna()
+            same_label = out[child].astype(str) == out[parent].astype(str)
+            fill = missing_score & same_label
+            out.loc[fill, child_m] = out.loc[fill, parent_m]
+
+    # Stable column order: labels then score/auc/expr per level.
+    ordered = list(label_cols)
+    for col in label_cols:
+        for metric_col in ("score", "auc", "expr"):
+            name = f"{col}_{metric_col}"
+            if name in out.columns:
+                ordered.append(name)
+    extras = [c for c in out.columns if c not in ordered]
+    return out[ordered + extras]
+
+
 def _map_levels_to_obs(
     adata,
     *,
@@ -190,14 +312,30 @@ def _map_levels_to_obs(
     assignments: pd.DataFrame,
     resolution: float,
 ) -> list[str]:
+    label_cols = [
+        c
+        for c in assignments.columns
+        if not str(c).endswith(("_score", "_auc", "_expr"))
+    ]
     annotation_cols: list[str] = []
-    for i, col in enumerate(assignments.columns):
+    for i, col in enumerate(label_cols):
         obs_col = level_key_for(i + 1, resolution)
         mapped = adata.obs[cluster_key].astype(str).map(assignments[col].to_dict())
         adata.obs[obs_col] = pd.Categorical(mapped.astype(object))
         annotation_cols.append(obs_col)
 
-    latest = assignments.apply(
+        score_col = f"{col}_score"
+        if score_col in assignments.columns:
+            score_obs = f"{obs_col}_score"
+            score_mapped = (
+                adata.obs[cluster_key]
+                .astype(str)
+                .map(assignments[score_col].to_dict())
+            )
+            adata.obs[score_obs] = pd.to_numeric(score_mapped, errors="coerce")
+
+    labels_only = assignments[label_cols]
+    latest = labels_only.apply(
         lambda row: row.dropna().iloc[-1] if row.dropna().shape[0] > 0 else np.nan,
         axis=1,
     )
@@ -299,6 +437,8 @@ def annotate_dataset(
     force: bool = False,
 ) -> Path:
     """Cluster at each resolution, run Snapseed, write annotated (+ optional clustered) h5ad."""
+    _suppress_annotation_warnings()
+
     import anndata as ad
     import scanpy as sc
 
@@ -326,6 +466,11 @@ def annotate_dataset(
             "leidenalg is required for Leiden clustering. Install with: "
             "conda install -c conda-forge leidenalg or: pip install leidenalg"
         ) from exc
+
+    try:
+        sc.settings.verbosity = 1
+    except Exception:
+        pass
 
     path = Path(file_path).expanduser().resolve()
     out_dir = Path(output_dir).expanduser().resolve()
@@ -412,7 +557,9 @@ def annotate_dataset(
         metrics_df = results["metrics"]
         assignments.index = assignments.index.astype(str)
         assignments = _apply_manual_overrides(assignments, manual_annotations)
-        assignments = assignments.fillna("Unassigned").astype(str)
+        # Notebook-style: missing/Unassigned deeper levels inherit the parent label.
+        assignments = _propagate_parent_labels(assignments)
+        assignments = _assignments_with_scores(assignments, metrics_df, ckey)
 
         tag = resolution_tag(resolution)
         adata.uns[f"snapseed_assignments_res{tag}"] = assignments
@@ -422,10 +569,12 @@ def annotate_dataset(
         cols = _map_levels_to_obs(
             adata, cluster_key=ckey, assignments=assignments, resolution=resolution
         )
+        # UMAPs for label columns only (skip Level_latest score plots).
+        plot_cols = [c for c in cols if not str(c).endswith("_score")]
         logger.info("  Wrote obs columns: %s", ", ".join(cols))
 
         if save_plots:
-            for col in cols:
+            for col in plot_cols:
                 _save_umap_png(
                     adata,
                     col,
