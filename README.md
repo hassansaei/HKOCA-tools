@@ -36,6 +36,7 @@ the QC R script. There are no separate harmonize/qc CLIs.
 ```bash
 conda env create -f conda/environment_harmonize.yaml
 conda env create -f conda/environment_qc.yaml
+conda env create -f conda/environment_integration.yaml
 conda activate hkoca_harmonize
 pip install -e .
 # Snapseed (annotation) is installed from https://github.com/hassansaei/snapseed
@@ -124,6 +125,34 @@ optional `figures/`. UMAP PNGs are written by default (flat under `figures/`, no
 per-sample subfolder) for Leiden and Level 1-3 per resolution; pass `--no-save-plots`
 to skip. Each annotated object stores labels for all three resolutions
 (`leiden_res_0.4` / `Level_*_res0.4`, etc.).
+
+### Integration (Seurat prep)
+
+Uses the dedicated R conda env `hkoca_integration` (Seurat, Harmony, clustree,
+glmGamPoi, etc.). Set `R_MAX_VSIZE=150Gb` during prep for large objects.
+
+```bash
+conda env create -f conda/environment_integration.yaml
+conda activate hkoca_integration
+pip install -e .
+
+# Optional GitHub-only R packages (also installed in the Docker image):
+# Rscript -e "remotes::install_github('mojaveazure/seurat-disk', upgrade='never')"
+# Rscript -e "remotes::install_github('samuel-marsh/scCustomize', upgrade='never')"
+
+hkoca integration prep \
+  --input-rds results/qc_filter/qc_filtered_rds/sample_harmonized_singlets_filtered.rds \
+  --annotated-h5ad results/annotation/annotated_obj/sample_annotated.h5ad \
+  --output-dir results/integration
+```
+
+Stage 1 (`prep`) normalizes RNA, runs SCTransform (glmGamPoi, regress
+`percent.mito`), PCA elbow, clustree, and silhouette-based resolution selection.
+Cell-type colors are shared with annotation via `hkoca/config/celltype_colors.yaml`
+(same hex codes in Python UMAPs and R ggplot/dittoSeq plots).
+Outputs: `prep/sct_prepared.rds`, `figures/elbow_plot.pdf`, `figures/clustree_sct.pdf`,
+`figures/silhouette_sct.pdf`, `tables/silhouette_scores.csv`,
+`tables/resolution_summary.csv`.
 
 ### QC-filter
 

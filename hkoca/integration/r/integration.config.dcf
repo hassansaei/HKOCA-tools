@@ -1,0 +1,32 @@
+# Default integration prep config (SCT + resolution selection).
+# CLI flags override these values.
+
+# R vector heap limit (integration can exceed default memory).
+r_max_vsize: 150Gb
+
+# Input paths (override with --input_rds / --annotated_h5ad).
+input_rds: null
+annotated_h5ad: null
+
+# Output base directory (override with --output_dir).
+output_dir: integration_results
+
+# SCT / PCA parameters
+n_features: 2500
+npcs: 50
+neighbor_dims: 1:30
+mito_regress: percent.mito
+
+# Clustering resolutions for clustree + silhouette
+resolutions: 0.1,0.2,0.3,0.4,0.5,0.6,0.8,1.0,1.2
+cluster_prefix: SCT_snn_res.
+
+# Silhouette subsample size (full dataset if smaller)
+silhouette_subsample: 5000
+silhouette_seed: 42
+
+# Skip when prep outputs already exist
+skip_existing: TRUE
+
+# Shared HKOCA cell-type colors (same as annotation module)
+celltype_colors_yaml: null

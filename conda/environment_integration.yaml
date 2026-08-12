@@ -1,0 +1,27 @@
+name: hkoca_integration
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - r-base>=4.2
+  - r-seurat>=4.3
+  - r-seuratobject
+  - r-matrix
+  - r-ggplot2
+  - r-patchwork
+  - r-clustree
+  - r-harmony
+  - bioconductor-glmgampoi
+  - bioconductor-nebulosa
+  - r-cluster
+  - r-digest
+  - r-jsonlite
+  - r-remotes
+  - r-yaml
+  - r-dplyr
+  - r-tidyr
+  - r-ggpubr
+  - r-rstatix
+  - bioconductor-dittoseq

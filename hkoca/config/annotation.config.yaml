@@ -1,11 +1,11 @@
 # Default Snapseed annotation config for hkoca annotation.
+# Packaged defaults live under hkoca/config/ (markers + celltype_colors.yaml).
 # Paths may be absolute or relative to --working-dir / the config file directory.
-# Override any key via CLI flags.
 
 paths:
   # Input: one h5ad, a directory of h5ad files, or a glob (CLI --input overrides).
   input: null
-  # Marker hierarchy YAML (default: packaged snapseed_markers_v4.yaml).
+  # Marker hierarchy YAML (default: hkoca/config/snapseed_markers_v4.yaml).
   markers: null
   # Root output directory.
   output_dir: annotation_results

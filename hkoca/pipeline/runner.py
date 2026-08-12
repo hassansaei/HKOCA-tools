@@ -174,9 +174,13 @@ def run_integration_stage(cfg: PipelineConfig, *, dry_run: bool = False) -> int:
     out_dir = os.path.join(cfg.output_root, cfg.integration_output_subdir)
     logger.info("STEP: integration -> %s", out_dir)
     if dry_run:
-        logger.info("[dry-run] would run integration (not implemented yet)")
+        logger.info("[dry-run] would run integration prep (wire sample paths in a later update)")
         return 0
-    logger.warning("Integration stage is not implemented yet; skipping.")
+    logger.warning(
+        "Pipeline integration wiring is not complete yet; run prep manually with "
+        "'hkoca integration prep --input-rds ... --output-dir %s'.",
+        out_dir,
+    )
     for line in status_message().splitlines():
         logger.info("  %s", line)
     return 0

@@ -19,6 +19,7 @@
 #   hkoca_harmonize   - gene-space harmonization / default CLI (incl. qc-filter)
 #   hkoca_cellbender  - CellBender ambient RNA removal (GPU optional)
 #   sc_qc_pipeline    - QC R stack; qc-filter hands off to this env automatically
+#   hkoca_integration - Seurat integration (SCT, Harmony, clustree, ...)
 #
 #   docker run --rm --platform linux/amd64 -e HKOCA_ENV=hkoca_cellbender \
 #       --gpus all hkoca:local \
@@ -52,6 +53,9 @@ COPY conda/ /tmp/conda/
 RUN mamba env create -f /tmp/conda/environment_harmonize.yaml && \
     mamba env create -f /tmp/conda/environment_cellbender.yaml && \
     mamba env create -f /tmp/conda/environment_qc.yaml && \
+    mamba env create -f /tmp/conda/environment_integration.yaml && \
+    conda run -n hkoca_integration Rscript -e "if (!requireNamespace('SeuratDisk', quietly=TRUE)) remotes::install_github('mojaveazure/seurat-disk', upgrade='never')" && \
+    conda run -n hkoca_integration Rscript -e "if (!requireNamespace('scCustomize', quietly=TRUE)) remotes::install_github('samuel-marsh/scCustomize', upgrade='never')" && \
     conda clean -afy && \
     find /opt/conda/envs -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true && \
     find /opt/conda/envs -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.a' \) -delete 2>/dev/null || true && \
@@ -97,7 +101,7 @@ WORKDIR /opt/hkoca
 # matches the commit being built. --no-deps: stage deps live in conda envs.
 COPY pyproject.toml README.md ./
 COPY hkoca/ ./hkoca/
-RUN for env in hkoca_harmonize hkoca_cellbender sc_qc_pipeline; do \
+RUN for env in hkoca_harmonize hkoca_cellbender sc_qc_pipeline hkoca_integration; do \
         conda run -n "$env" pip install --no-cache-dir --no-deps . ; \
     done && \
     conda run -n hkoca_harmonize hkoca --version && \

@@ -2,7 +2,7 @@
 # Activate the selected HKOCA conda env, then run hkoca (or an explicit command).
 set -euo pipefail
 
-readonly ALLOWED_ENVS="hkoca_harmonize hkoca_cellbender sc_qc_pipeline"
+readonly ALLOWED_ENVS="hkoca_harmonize hkoca_cellbender sc_qc_pipeline hkoca_integration"
 HKOCA_ENV="${HKOCA_ENV:-hkoca_harmonize}"
 
 case " ${ALLOWED_ENVS} " in

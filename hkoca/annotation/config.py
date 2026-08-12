@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from hkoca.config import annotation_config_path as packaged_config_path
+from hkoca.config import snapseed_markers_path as packaged_markers_path
 
 DEFAULT_RESOLUTIONS: tuple[float, ...] = (0.4, 0.6, 1.0)
 
@@ -24,18 +26,6 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "dpi": 150,
     "skip_existing": True,
 }
-
-
-def packaged_markers_path() -> Path:
-    return Path(
-        resources.files("hkoca.annotation.data").joinpath("snapseed_markers_v4.yaml")
-    ).resolve()
-
-
-def packaged_config_path() -> Path:
-    return Path(
-        resources.files("hkoca.annotation.data").joinpath("annotation.config.yaml")
-    ).resolve()
 
 
 def load_yaml(path: Path | str) -> Any:
