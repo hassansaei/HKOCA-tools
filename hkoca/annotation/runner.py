@@ -364,6 +364,51 @@ def _plot_title_for_obs_key(color_key: str) -> str:
     return key.replace("_", " ")
 
 
+def _is_leiden_obs_key(color_key: str) -> bool:
+    return str(color_key).startswith("leiden_res_")
+
+
+def _annotate_cluster_numbers(
+    ax,
+    umap: np.ndarray,
+    labels: pd.Series,
+    cats: list[str],
+) -> None:
+    """Place cluster IDs at each cluster centroid on Leiden UMAPs."""
+    for cluster_id in cats:
+        mask = labels == cluster_id
+        if not mask.any():
+            continue
+        cx = float(np.median(umap[mask, 0]))
+        cy = float(np.median(umap[mask, 1]))
+        ax.text(
+            cx,
+            cy,
+            str(cluster_id),
+            ha="center",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+            color="black",
+        )
+    # White halo so numbers stay readable on dense clusters.
+    import matplotlib.patheffects as pe
+
+    for text in ax.texts:
+        text.set_path_effects([pe.withStroke(linewidth=2.5, foreground="white")])
+
+
+def _umap_figure_style(color_key: str) -> tuple[tuple[float, float], float, bool]:
+    """Return (figsize, alpha, show_legend) for a given obs column."""
+    if _is_leiden_obs_key(color_key):
+        # Slightly narrower panel; cluster numbers instead of a legend.
+        return (6, 6), 0.65, False
+    if str(color_key).startswith("Level_"):
+        # Extra width for the cell-type legend.
+        return (10, 6), 0.55, True
+    return (8, 6), 0.65, False
+
+
 def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: int) -> None:
     import matplotlib
 
@@ -385,8 +430,8 @@ def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: in
         cmap = plt.get_cmap("tab20", max(len(cats), 1))
         colors = {c: cmap(i) for i, c in enumerate(cats)}
 
-    # Width slightly larger than height (e.g. 8 x 6).
-    fig, ax = plt.subplots(figsize=(8, 6))
+    figsize, alpha, show_legend = _umap_figure_style(color_key)
+    fig, ax = plt.subplots(figsize=figsize)
     for c in cats:
         mask = labels == c
         ax.scatter(
@@ -395,13 +440,17 @@ def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: in
             s=4,
             c=[colors[c]],
             rasterized=True,
-            alpha=0.65,
+            alpha=alpha,
             label=c,
         )
     ax.set_title(title)
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
-    if palette is not None and cats:
+
+    if _is_leiden_obs_key(color_key):
+        _annotate_cluster_numbers(ax, umap, labels, cats)
+
+    if show_legend and palette is not None and cats:
         handles = [
             Line2D(
                 [0],
@@ -422,7 +471,7 @@ def _save_umap_png(adata, color_key: str, out_path: Path, *, title: str, dpi: in
             frameon=False,
             title=title,
         )
-        fig.tight_layout(rect=(0, 0, 0.78, 1))
+        fig.tight_layout(rect=(0, 0, 0.72, 1))
     else:
         fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
