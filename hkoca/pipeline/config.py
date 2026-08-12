@@ -35,7 +35,11 @@ class PipelineConfig:
     qc_output_subdir: str
     qc_run: str
     annotation_output_subdir: str
+    annotation_config: str
+    annotation_markers: str
     integration_output_subdir: str
+    integration_config: str
+    integration_methods: str
     config_path: str
 
 
@@ -154,7 +158,11 @@ def resolve_config(
         qc_output_subdir=path_val(qc_output_subdir, "qc", "output_subdir") or "qc_filter",
         qc_run=path_val(qc_run, "qc", "run") or "all",
         annotation_output_subdir=_get(cfg, "annotation", "output_subdir", "annotation"),
+        annotation_config=path_val(None, "annotation", "config"),
+        annotation_markers=path_val(None, "annotation", "markers"),
         integration_output_subdir=_get(cfg, "integration", "output_subdir", "integration"),
+        integration_config=path_val(None, "integration", "config"),
+        integration_methods=_get(cfg, "integration", "methods", "harmony,rpca,cca") or "harmony,rpca,cca",
         config_path=config_path,
     )
 
@@ -259,8 +267,6 @@ def qc_output_dir(cfg: PipelineConfig) -> str:
     if cfg.qc_output:
         return cfg.qc_output
     return os.path.join(cfg.output_root, cfg.qc_output_subdir)
-    order = ("cellbender", "qc_filter", "annotation", "integration")
-    return order.index(stage)
 
 
 def stages_in_range(from_stage: PipelineStage, to_stage: PipelineStage) -> tuple[PipelineStage, ...]:

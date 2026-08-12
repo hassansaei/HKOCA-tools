@@ -4,17 +4,31 @@ from __future__ import annotations
 
 import glob
 import os
-from typing import Any
 
 from hkoca.pipeline.config import PipelineConfig, qc_output_dir, resolve_sample_dir, sample_runs_cellbender
+from hkoca.pipeline.paths import (
+    annotation_output_dir,
+    discover_study_qc_filtered_h5ad,
+    expected_annotated_h5ad,
+    integration_method_rds,
+    integration_prepared_rds,
+)
 
 
 def _nonempty_file(path: str) -> bool:
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
+def _glob_nonempty(pattern: str) -> list[str]:
+    return sorted(p for p in glob.glob(pattern) if _nonempty_file(p))
+
+
 def _study_names(df) -> list[str]:
     return sorted({str(row["study"]).strip() for _, row in df.iterrows() if str(row.get("study", "")).strip()})
+
+
+def _parse_methods(methods: str) -> tuple[str, ...]:
+    return tuple(m.strip().lower() for m in methods.split(",") if m.strip())
 
 
 def harmonize_rds_path(output_root: str, study: str) -> str:
@@ -60,10 +74,6 @@ def cellbender_complete(
     return (len(missing) == 0, missing, done_ids)
 
 
-def _glob_nonempty(pattern: str) -> list[str]:
-    return [p for p in glob.glob(pattern) if _nonempty_file(p)]
-
-
 def qc_doublet_complete(qc_output: str, df) -> tuple[bool, list[str]]:
     """Doublet stage done if each study has a matching *_singlets.rds."""
     dbl_dir = os.path.join(qc_output, "doublet_filtered_rds")
@@ -104,3 +114,62 @@ def qc_stage_complete(cfg: PipelineConfig, df) -> tuple[bool, str]:
     if reasons:
         return False, "; ".join(reasons)
     return True, "QC outputs present"
+
+
+def annotation_complete(cfg: PipelineConfig, df) -> tuple[bool, str]:
+    """Annotation done when each study has a matching *_annotated.h5ad."""
+    qc_out = qc_output_dir(cfg)
+    ann_root = annotation_output_dir(cfg)
+    missing: list[str] = []
+
+    for study in _study_names(df):
+        filtered_h5ad = discover_study_qc_filtered_h5ad(qc_out, study)
+        if not filtered_h5ad:
+            missing.append(f"{study}: QC filtered h5ad missing under h5ad_converted/")
+            continue
+        annotated = expected_annotated_h5ad(ann_root, filtered_h5ad)
+        if not _nonempty_file(annotated):
+            missing.append(annotated)
+
+    if missing:
+        return False, missing[0]
+    return True, "annotation outputs present"
+
+
+def integration_prep_complete(integration_dir: str) -> bool:
+    return _nonempty_file(integration_prepared_rds(integration_dir))
+
+
+def integration_run_complete(integration_dir: str, methods: str) -> tuple[bool, list[str]]:
+    missing: list[str] = []
+    for method in _parse_methods(methods):
+        path = integration_method_rds(integration_dir, method)
+        if not _nonempty_file(path):
+            missing.append(path)
+    return (len(missing) == 0, missing)
+
+
+def integration_stage_complete(
+    cfg: PipelineConfig,
+    df,
+    *,
+    methods: str,
+) -> tuple[bool, str]:
+    from hkoca.pipeline.paths import integration_output_dir
+
+    studies = _study_names(df)
+    n_studies = len(studies)
+    missing: list[str] = []
+
+    for study in studies:
+        int_dir = integration_output_dir(cfg, study, n_studies=n_studies)
+        if not integration_prep_complete(int_dir):
+            missing.append(integration_prepared_rds(int_dir))
+            continue
+        ok, method_missing = integration_run_complete(int_dir, methods)
+        if not ok:
+            missing.extend(method_missing)
+
+    if missing:
+        return False, missing[0]
+    return True, "integration outputs present"

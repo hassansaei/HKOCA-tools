@@ -4,12 +4,23 @@ Chains stage modules in order:
 
     cellbender (optional) -> qc_filter -> annotation -> integration
 
+Atlas projection is a separate module (`hkoca projection map`) and is not
+part of this pipeline.
+
 The sample_info CSV drives CellBender sample selection and harmonization
 metadata. Use ``--skip-cellbender`` or per-row ``run_cellbender=False`` to
 bypass ambient RNA removal.
 
 By default the pipeline resumes: finished stage outputs are detected under
 ``--output`` and those steps are skipped. Pass ``--force`` to re-run.
+
+Stage I/O (per study):
+  qc_filter   -> qc_filter/qc_filtered_rds/{study}*_filtered.rds
+                 qc_filter/h5ad_converted/{study}*_filtered.h5ad
+  annotation  -> annotation/annotated_obj/{stem}_annotated.h5ad
+  integration -> integration/prep/sct_prepared.rds (single-study layout)
+                 integration/objects/integrated_{method}.rds
+                 (multi-study: integration/{study}/...)
 """
 
 from __future__ import annotations
@@ -72,8 +83,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "  skip             True to exclude a row\n"
             "\n"
             "resume (default):\n"
-            "  Finished CellBender / harmonize / QC outputs under --output are skipped.\n"
+            "  Finished stage outputs under --output are skipped.\n"
             "  Use --force to re-run everything.\n"
+            "\n"
+            "stages (wired end-to-end through integration):\n"
+            "  cellbender -> qc_filter -> annotation -> integration\n"
+            "  projection is separate: hkoca projection map\n"
             "\n"
             "example:\n"
             "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out\n"

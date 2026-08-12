@@ -6,8 +6,12 @@ import logging
 import os
 
 from hkoca.pipeline.checkpoints import (
+    annotation_complete,
     cellbender_complete,
     harmonize_complete,
+    integration_prep_complete,
+    integration_run_complete,
+    integration_stage_complete,
     qc_stage_complete,
 )
 from hkoca.pipeline.config import (
@@ -18,6 +22,14 @@ from hkoca.pipeline.config import (
     sample_runs_cellbender,
     stages_in_range,
     write_harmonize_csv,
+)
+from hkoca.pipeline.paths import (
+    annotation_output_dir,
+    collect_study_artifacts,
+    discover_study_qc_filtered_h5ad,
+    expected_annotated_h5ad,
+    integration_prepared_rds,
+    qc_h5ad_dir,
 )
 
 logger = logging.getLogger("hkoca.pipeline")
@@ -126,7 +138,6 @@ def run_qc_filter_stage(
         argv.append("-v")
     if force:
         argv.append("--force-overwrite")
-    # qc-filter skips existing by default; do not pass a redundant flag
 
     argv.extend(
         [
@@ -149,40 +160,165 @@ def run_qc_filter_stage(
     return int(qc_filter_main(argv) or 0)
 
 
-def run_annotation_stage(cfg: PipelineConfig, *, dry_run: bool = False) -> int:
-    from hkoca.annotation import status_message
+def run_annotation_stage(
+    cfg: PipelineConfig,
+    df,
+    *,
+    dry_run: bool = False,
+    resume: bool = True,
+    force: bool = False,
+) -> int:
+    from hkoca.annotation.config import DEFAULT_RESOLUTIONS, load_annotation_config
+    from hkoca.annotation.runner import run_annotation_batch
+    from hkoca.config import snapseed_markers_path
 
-    out_dir = os.path.join(cfg.output_root, cfg.annotation_output_subdir)
-    logger.info("STEP: annotation -> %s", out_dir)
+    ann_root = annotation_output_dir(cfg)
+    qc_out = qc_output_dir(cfg)
+
+    if resume and not force:
+        ok, reason = annotation_complete(cfg, df)
+        if ok:
+            logger.info("Annotation stage already complete (%s); skipping.", reason)
+            return 0
+        logger.info("Annotation resume: %s", reason)
+
+    inputs: list[str] = []
+    for study in sorted({str(row["study"]).strip() for _, row in df.iterrows()}):
+        filtered_h5ad = discover_study_qc_filtered_h5ad(qc_out, study)
+        if not filtered_h5ad:
+            logger.error(
+                "Missing QC filtered h5ad for study '%s' under %s. "
+                "Ensure qc-filter ran with h5ad conversion enabled.",
+                study,
+                qc_h5ad_dir(qc_out),
+            )
+            return 1
+        inputs.append(filtered_h5ad)
+
+    logger.info("Annotation inputs (%d):", len(inputs))
+    for path in inputs:
+        logger.info("  %s -> %s", path, expected_annotated_h5ad(ann_root, path))
+
     if dry_run:
-        logger.info("[dry-run] would run Snapseed annotation via hkoca annotation run")
+        logger.info("[dry-run] would annotate %d h5ad file(s) under %s", len(inputs), ann_root)
         return 0
-    logger.warning(
-        "Pipeline annotation stage not auto-wired yet; run "
-        "`hkoca annotation run --input <h5ad> --output-dir %s` "
-        "(default resolutions 0.4,0.6,1.0).",
-        out_dir,
+
+    ann_cfg = load_annotation_config(cfg.annotation_config or None, working_dir=cfg.working_dir)
+    params = dict(ann_cfg["parameters"])
+    if not params.get("resolutions"):
+        params["resolutions"] = list(DEFAULT_RESOLUTIONS)
+    if force:
+        params["skip_existing"] = False
+
+    markers = cfg.annotation_markers or str(snapseed_markers_path())
+    annotated_dir = os.path.join(ann_root, "annotated_obj")
+    clustered_dir = os.path.join(ann_root, "clustered")
+    figures_dir = os.path.join(ann_root, "figures")
+    os.makedirs(annotated_dir, exist_ok=True)
+
+    run_annotation_batch(
+        inputs,
+        markers_path=markers,
+        resolutions=params["resolutions"],
+        annotated_dir=annotated_dir,
+        clustered_dir=clustered_dir,
+        figures_dir=figures_dir,
+        parameters=params,
+        force=force,
     )
-    for line in status_message().splitlines():
-        logger.info("  %s", line)
+    ok, reason = annotation_complete(cfg, df)
+    if not ok:
+        logger.error("Annotation stage finished but outputs are incomplete: %s", reason)
+        return 1
+    logger.info("Annotation stage completed successfully under %s", ann_root)
     return 0
 
 
-def run_integration_stage(cfg: PipelineConfig, *, dry_run: bool = False) -> int:
-    from hkoca.integration import status_message
+def run_integration_stage(
+    cfg: PipelineConfig,
+    df,
+    *,
+    dry_run: bool = False,
+    resume: bool = True,
+    force: bool = False,
+) -> int:
+    from hkoca.integration.integration_runner import run_methods, run_prep
 
-    out_dir = os.path.join(cfg.output_root, cfg.integration_output_subdir)
-    logger.info("STEP: integration -> %s", out_dir)
+    if resume and not force:
+        ok, reason = integration_stage_complete(cfg, df, methods=cfg.integration_methods)
+        if ok:
+            logger.info("Integration stage already complete (%s); skipping.", reason)
+            return 0
+        logger.info("Integration resume: %s", reason)
+
+    try:
+        artifacts = collect_study_artifacts(cfg, df)
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        return 1
+
+    for row in artifacts:
+        study = row["study"]
+        int_dir = row["integration_dir"]
+        filtered_rds = row["filtered_rds"]
+        annotated_h5ad = row["annotated_h5ad"] or None
+        prepared_rds = integration_prepared_rds(int_dir)
+
+        logger.info("Integration study: %s", study)
+        logger.info("  filtered RDS : %s", filtered_rds)
+        logger.info("  annotated    : %s", annotated_h5ad or "(none)")
+        logger.info("  output dir   : %s", int_dir)
+
+        if dry_run:
+            logger.info("[dry-run] would run integration prep + run for study %s", study)
+            continue
+
+        if resume and not force and integration_prep_complete(int_dir):
+            logger.info("Integration prep already complete for %s; skipping prep.", study)
+        else:
+            rc = run_prep(
+                input_rds=filtered_rds,
+                output_dir=int_dir,
+                annotated_h5ad=annotated_h5ad,
+                config=cfg.integration_config or None,
+                force_overwrite=force,
+                dry_run=False,
+            )
+            if rc != 0:
+                logger.error("Integration prep failed for study '%s'.", study)
+                return rc
+
+        if resume and not force:
+            ok, missing = integration_run_complete(int_dir, cfg.integration_methods)
+            if ok:
+                logger.info("Integration run already complete for %s; skipping run.", study)
+                continue
+            logger.info(
+                "Integration run resume for %s: missing %d method output(s).",
+                study,
+                len(missing),
+            )
+
+        rc = run_methods(
+            prepared_rds=prepared_rds,
+            output_dir=int_dir,
+            methods=cfg.integration_methods,
+            config=cfg.integration_config or None,
+            force_overwrite=force,
+            dry_run=False,
+        )
+        if rc != 0:
+            logger.error("Integration run failed for study '%s'.", study)
+            return rc
+
     if dry_run:
-        logger.info("[dry-run] would run integration prep (wire sample paths in a later update)")
         return 0
-    logger.warning(
-        "Pipeline integration wiring is not complete yet; run prep manually with "
-        "'hkoca integration prep --input-rds ... --output-dir %s'.",
-        out_dir,
-    )
-    for line in status_message().splitlines():
-        logger.info("  %s", line)
+
+    ok, reason = integration_stage_complete(cfg, df, methods=cfg.integration_methods)
+    if not ok:
+        logger.error("Integration stage finished but outputs are incomplete: %s", reason)
+        return 1
+    logger.info("Integration stage completed successfully.")
     return 0
 
 
@@ -199,6 +335,9 @@ def run_pipeline(
     logger.info("Sample info CSV: %s", cfg.sample_info_csv)
     logger.info("Output root: %s", cfg.output_root)
     logger.info("Resume: %s | force: %s", resume and not force, force)
+    logger.info(
+        "Projection is a separate module; run `hkoca projection map` after integration."
+    )
 
     df = load_sample_info(cfg.sample_info_csv)
     work_dir = os.path.join(cfg.output_root, ".hkoca")
@@ -226,8 +365,6 @@ def run_pipeline(
             continue
 
         if stage == "qc_filter":
-            # If CellBender was not in this run range, still prefer filtered H5
-            # paths when those outputs already exist.
             if not cellbender_sample_ids and cfg.run_cellbender:
                 _, _, cellbender_sample_ids = cellbender_complete(
                     cfg, df, output_suffix=suffix
@@ -267,14 +404,28 @@ def run_pipeline(
             continue
 
         if stage == "annotation":
-            rc = run_annotation_stage(cfg, dry_run=dry_run)
+            rc = run_annotation_stage(
+                cfg,
+                df,
+                dry_run=dry_run,
+                resume=resume,
+                force=force,
+            )
             if rc != 0:
+                logger.error("Annotation stage failed; stopping pipeline.")
                 return rc
             continue
 
         if stage == "integration":
-            rc = run_integration_stage(cfg, dry_run=dry_run)
+            rc = run_integration_stage(
+                cfg,
+                df,
+                dry_run=dry_run,
+                resume=resume,
+                force=force,
+            )
             if rc != 0:
+                logger.error("Integration stage failed; stopping pipeline.")
                 return rc
             continue
 

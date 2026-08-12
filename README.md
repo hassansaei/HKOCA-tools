@@ -62,7 +62,7 @@ hkoca cellbender h5 --help
 ### Full pipeline
 
 ```bash
-# CellBender -> harmonize/QC -> annotation/integration (stubs skipped with a log)
+# CellBender -> harmonize/QC -> annotation -> integration (projection is separate)
 hkoca pipeline \
   --csv sample_info.csv \
   --gtf genes.gtf \
@@ -100,7 +100,15 @@ Outputs are written under `--output`:
 - CellBender: `{sample_dir}/{sample_id}_filtered.h5` (when enabled)
 - Harmonize: `{output}/{study}/raw|harmonized|rds/`
 - QC: `{output}/qc_filter/` (or `--qc-output`)
-- Annotation / integration: `{output}/annotation/` via `hkoca annotation` (pipeline auto-wire later)
+  - `{output}/qc_filter/qc_filtered_rds/{study}*_filtered.rds`
+  - `{output}/qc_filter/h5ad_converted/{study}*_filtered.h5ad`
+- Annotation: `{output}/annotation/annotated_obj/{stem}_annotated.h5ad`
+- Integration: `{output}/integration/prep/sct_prepared.rds` and
+  `{output}/integration/objects/integrated_{method}.rds`
+  (multi-study runs use `{output}/integration/{study}/...`)
+
+Projection onto the atlas is **not** part of `hkoca pipeline`; run
+`hkoca projection map` separately after integration or annotation.
 
 ### Annotation (Snapseed)
 
