@@ -26,7 +26,8 @@ def status_message() -> str:
         "Integration module (Seurat R env).\n"
         "  Stage 1 (prep):  hkoca integration prep --input-rds filtered.rds --output-dir out/integration\n"
         "  Stage 2 (run):   hkoca integration run --prepared-rds out/integration/prep/sct_prepared.rds \\\n"
-        "                       --output-dir out/integration [--methods harmony,rpca,cca]"
+        "                       --output-dir out/integration [--harmony] [--rpca] [--cca]\n"
+        "                       (omit flags to run all three methods)"
     )
 
 
@@ -120,6 +121,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Comma-separated list of methods to run (default: harmony,rpca,cca)",
     )
+    p_run.add_argument("--harmony", action="store_true", help="Run Harmony integration")
+    p_run.add_argument("--rpca",    action="store_true", help="Run RPCA integration")
+    p_run.add_argument("--cca",     action="store_true", help="Run CCA integration")
     p_run.add_argument(
         "--config",
         default=None,
@@ -183,10 +187,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.cmd == "run":
+        # Explicit flags take priority; fall back to --methods; default is all three.
+        selected = [m for m, flag in [("harmony", args.harmony), ("rpca", args.rpca), ("cca", args.cca)] if flag]
+        methods_str = ",".join(selected) if selected else getattr(args, "methods", None)
         return run_methods(
             prepared_rds=args.prepared_rds,
             output_dir=args.output_dir,
-            methods=getattr(args, "methods", None),
+            methods=methods_str,
             config=args.config,
             force_overwrite=bool(args.force_overwrite),
             dry_run=bool(args.dry_run),
