@@ -31,5 +31,16 @@ skip_existing: TRUE
 # Shared HKOCA cell-type colors (same as annotation module)
 celltype_colors_yaml: null
 
-# Marker YAML for FeaturePlots (default: packaged snapseed_markers_v4.yaml)
+# Marker YAML for FeaturePlots and re-annotation (default: packaged snapseed_markers_v4.yaml)
 markers_yaml: null
+
+# Integration methods to run (comma-separated; default: harmony,rpca,cca)
+methods: harmony,rpca,cca
+
+# Dims used for FindNeighbors + RunUMAP in all integration methods
+integration_dims: 1:30
+
+# Per-method clustering resolutions (override individually as needed)
+harmony_resolution: 0.6
+rpca_resolution: 0.5
+cca_resolution: 0.5

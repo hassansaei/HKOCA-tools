@@ -21,6 +21,7 @@ DEFAULT_INTEGRATION_ENV = "hkoca_integration"
 def r_script_path(stage: str = "prep") -> Path:
     scripts = {
         "prep": "integration_prep.R",
+        "run": "integration_methods.R",
     }
     name = scripts.get(stage)
     if name is None:
@@ -111,6 +112,80 @@ def build_prep_command(
     if extra_args:
         cmd.extend(extra_args)
     return cmd
+
+
+def build_run_command(
+    *,
+    prepared_rds: str,
+    output_dir: str,
+    methods: str | None = None,
+    config: str | None = None,
+    force_overwrite: bool = False,
+    extra_args: list[str] | None = None,
+) -> list[str]:
+    from hkoca.config import celltype_colors_path, snapseed_markers_path
+
+    cmd = [
+        find_rscript(),
+        str(r_script_path("run")),
+        "--config",
+        str(config or default_config_path()),
+        "--celltype_colors_yaml",
+        str(celltype_colors_path()),
+        "--markers_yaml",
+        str(snapseed_markers_path()),
+        "--prepared_rds",
+        os.path.abspath(prepared_rds),
+        "--output_dir",
+        os.path.abspath(output_dir),
+    ]
+    if methods:
+        cmd.extend(["--methods", methods])
+    if force_overwrite:
+        cmd.append("--force_overwrite")
+    if extra_args:
+        cmd.extend(extra_args)
+    return cmd
+
+
+def run_methods(
+    *,
+    prepared_rds: str,
+    output_dir: str,
+    methods: str | None = None,
+    config: str | None = None,
+    force_overwrite: bool = False,
+    dry_run: bool = False,
+    extra_args: list[str] | None = None,
+) -> int:
+    if not dry_run and not os.path.isfile(prepared_rds):
+        logger.error("Prepared RDS does not exist: %s", prepared_rds)
+        return 1
+
+    try:
+        cmd = build_run_command(
+            prepared_rds=prepared_rds,
+            output_dir=output_dir,
+            methods=methods,
+            config=config,
+            force_overwrite=force_overwrite,
+            extra_args=extra_args,
+        )
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        return 1
+
+    logger.info("Integration methods command: %s", " ".join(cmd))
+    if dry_run:
+        return 0
+
+    os.makedirs(output_dir, exist_ok=True)
+    result = subprocess.run(cmd, check=False, env=_subprocess_env_for_rscript(cmd[0]))
+    if result.returncode != 0:
+        logger.error("Integration methods failed (exit %s).", result.returncode)
+        return result.returncode
+    logger.info("Integration methods completed successfully. Outputs under: %s", output_dir)
+    return 0
 
 
 def run_prep(

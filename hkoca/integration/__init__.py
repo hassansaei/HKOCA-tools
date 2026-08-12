@@ -14,6 +14,7 @@ from hkoca.integration.integration_runner import (
     default_config_path,
     packaged_config,
     r_script_path,
+    run_methods,
     run_prep,
 )
 
@@ -23,8 +24,9 @@ logger = logging.getLogger("hkoca.integration")
 def status_message() -> str:
     return (
         "Integration module (Seurat R env).\n"
-        "  hkoca integration prep --input-rds filtered.rds --output-dir out/integration\n"
-        "  hkoca integration prep --input-rds filtered.rds --annotated-h5ad annotated.h5ad --output-dir out/integration"
+        "  Stage 1 (prep):  hkoca integration prep --input-rds filtered.rds --output-dir out/integration\n"
+        "  Stage 2 (run):   hkoca integration run --prepared-rds out/integration/prep/sct_prepared.rds \\\n"
+        "                       --output-dir out/integration [--methods harmony,rpca,cca]"
     )
 
 
@@ -98,6 +100,41 @@ def _build_parser() -> argparse.ArgumentParser:
     p_prep.add_argument("--dry-run", action="store_true")
     p_prep.add_argument("-v", "--verbose", action="store_true")
 
+    p_run = sub.add_parser(
+        "run",
+        help="Run Harmony / RPCA / CCA integration + re-annotation on the prepared SCT object",
+    )
+    p_run.add_argument(
+        "--prepared-rds",
+        required=True,
+        help="SCT-prepared RDS from 'hkoca integration prep' (prep/sct_prepared.rds)",
+    )
+    p_run.add_argument(
+        "--output-dir",
+        "-o",
+        required=True,
+        help="Integration output directory (same root used for prep)",
+    )
+    p_run.add_argument(
+        "--methods",
+        default=None,
+        help="Comma-separated list of methods to run (default: harmony,rpca,cca)",
+    )
+    p_run.add_argument(
+        "--config",
+        default=None,
+        help="Path to integration.config.dcf",
+    )
+    p_run.add_argument(
+        "--force",
+        "--force-overwrite",
+        dest="force_overwrite",
+        action="store_true",
+        help="Re-run even when per-method RDS already exists",
+    )
+    p_run.add_argument("--dry-run", action="store_true")
+    p_run.add_argument("-v", "--verbose", action="store_true")
+
     parser.add_argument(
         "--print-script",
         action="store_true",
@@ -145,8 +182,18 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=bool(args.dry_run),
         )
 
+    if args.cmd == "run":
+        return run_methods(
+            prepared_rds=args.prepared_rds,
+            output_dir=args.output_dir,
+            methods=getattr(args, "methods", None),
+            config=args.config,
+            force_overwrite=bool(args.force_overwrite),
+            dry_run=bool(args.dry_run),
+        )
+
     parser.print_help()
     return 1
 
 
-__all__ = ["main", "status_message"]
+__all__ = ["main", "status_message", "run_prep", "run_methods"]
