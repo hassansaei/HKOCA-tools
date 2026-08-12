@@ -14,7 +14,8 @@ projection onto the atlas.
 | `hkoca cellbender mtx` | `hkoca.cellbender` | CellBender on CellRanger MTX dirs |
 | `hkoca qc-filter` | `hkoca.qc_filter` | Harmonize (`--to-rds`) then doublet/QC |
 | `hkoca annotation` | `hkoca.annotation` | Cell-type annotation |
-| `hkoca integration` | `hkoca.integration` | Batch integration / atlas projection |
+| `hkoca integration` | `hkoca.integration` | Batch integration (Harmony / RPCA / CCA) |
+| `hkoca projection` | `hkoca.projection` | Map query h5ad onto reference atlas |
 
 ```
 hkoca/
@@ -25,6 +26,7 @@ hkoca/
     r/                      # internal: doublet detection + QC (step 2)
   annotation/
   integration/
+  projection/
 conda/                      # Stage-specific conda / Apptainer environments
 ```
 
@@ -153,6 +155,36 @@ Cell-type colors are shared with annotation via `hkoca/config/celltype_colors.ya
 Outputs: `prep/sct_prepared.rds`, `figures/elbow_plot.pdf`, `figures/clustree_sct.pdf`,
 `figures/silhouette_sct.pdf`, `tables/silhouette_scores.csv`,
 `tables/resolution_summary.csv`.
+
+### Projection (atlas mapping)
+
+Uses the Python conda env `hkoca_harmonize` (scanpy ingest). Provide your
+reference atlas as `.h5ad`; query can be an HKOCA annotated object or any
+external dataset in the same gene space.
+
+```bash
+conda activate hkoca_harmonize
+pip install -e .
+
+hkoca projection map \
+  --atlas reference/nephatlas.h5ad \
+  --query results/annotation/annotated_obj/sample_annotated.h5ad \
+  --output-dir results/projection
+```
+
+The module auto-detects atlas label columns (`celltype_final`, `Level_3`, …),
+projects query cells with `scanpy.tl.ingest`, and writes comparison plots:
+
+- `figures/umap_overlay_*.png` — atlas + projected query on reference UMAP
+- `figures/umap_query_*.png` — projected labels on query
+- `figures/composition_*.png` — atlas vs query cell-type fractions
+- `figures/umap_split_<batch>_*.png` — split by `sample_id` (or `--query-batch-key`)
+- `figures/confusion_*.png` — optional, when `--query-label-column` is set
+
+Outputs: `projected_obj/<query>_projected.h5ad`, `tables/composition_*.csv`,
+`tables/projection_summary.csv`, `logs/projection.log`.
+
+Packaged defaults: `hkoca projection --print-config`.
 
 ### QC-filter
 

@@ -14,6 +14,7 @@ _COMMANDS = {
     "qc-filter": ("hkoca.qc_filter", "main"),
     "annotation": ("hkoca.annotation", "main"),
     "integration": ("hkoca.integration", "main"),
+    "projection": ("hkoca.projection", "main"),
 }
 
 
@@ -32,7 +33,8 @@ def main(argv: list[str] | None = None) -> int:
             "  cellbender   Ambient RNA removal (h5 | mtx)\n"
             "  qc-filter    Harmonize then doublets + QC (single command)\n"
             "  annotation   Cell-type annotation\n"
-            "  integration  Batch integration / atlas projection\n"
+            "  integration  Batch integration (Harmony / RPCA / CCA)\n"
+            "  projection   Map query h5ad onto reference atlas\n"
         ),
     )
     parser.add_argument(
@@ -52,7 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Harmonize then doublet detection + QC (always both, in order)",
     )
     sub.add_parser("annotation", help="Cell-type annotation")
-    sub.add_parser("integration", help="Batch integration / atlas projection")
+    sub.add_parser("integration", help="Batch integration (Harmony / RPCA / CCA)")
+    sub.add_parser("projection", help="Project query h5ad onto reference atlas")
 
     if not argv or argv[0] in ("-h", "--help", "-V", "--version"):
         parser.parse_args(argv)

@@ -1,0 +1,35 @@
+# Default HKOCA atlas projection config (scanpy ingest).
+# CLI flags override these values.
+
+paths:
+  atlas_h5ad: null
+  query_h5ad: null
+  output_dir: projection_results
+
+reference:
+  # Auto-detect first match when null (celltype_final, Level_3, Level_3_latest, Level_2, Level_1)
+  label_columns: null
+  batch_key: null
+
+query:
+  batch_key: sample_id
+  label_column: null
+
+projection:
+  normalize_target_sum: 10000
+  hvg_n_top_genes: 3000
+  pca_n_comps: 50
+  neighbors_n_neighbors: 20
+  neighbors_n_pcs: 30
+  seed: 42
+
+outputs:
+  projected_subdir: projected_obj
+  figures_subdir: figures
+  tables_subdir: tables
+  logs_subdir: logs
+
+plotting:
+  save_plots: true
+  dpi: 150
+  skip_existing: true
