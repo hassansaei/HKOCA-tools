@@ -9,6 +9,13 @@ input_rds: null
 annotated_h5ad: null
 
 # Output base directory (override with --output_dir).
+# Layout:
+#   prep/              SCT object + elbow/clustree/silhouette PNGs
+#   nonintegrated/     pre-integration UMAP + FeaturePlots
+#   harmony/ rpca/ cca/ per-method figures
+#   objects/           integrated_*.rds
+#   tables/            silhouette + summary CSVs
+#   integration_prep.log / integration_methods.log at output root
 output_dir: integration_results
 
 # SCT / PCA parameters
@@ -18,12 +25,15 @@ neighbor_dims: 1:30
 mito_regress: percent.mito
 
 # Clustering resolutions for clustree + silhouette
-resolutions: 0.1,0.2,0.3,0.4,0.5,0.6,0.8,1.0,1.2
+resolutions: 0.3,0.4,0.5,0.6,0.8,1.0,1.2
 cluster_prefix: SCT_snn_res.
 
 # Silhouette subsample size (full dataset if smaller)
 silhouette_subsample: 5000
 silhouette_seed: 42
+# Ignore very coarse resolutions when picking the silhouette maximum
+silhouette_min_resolution: 0.4
+silhouette_min_clusters: 5
 
 # Skip when prep outputs already exist
 skip_existing: TRUE

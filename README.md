@@ -105,7 +105,9 @@ Outputs are written under `--output`:
 - Annotation: `{output}/annotation/annotated_obj/{stem}_annotated.h5ad`
 - Integration: `{output}/integration/prep/sct_prepared.rds` and
   `{output}/integration/objects/integrated_{method}.rds`
-  (multi-study runs use `{output}/integration/{study}/...`)
+  Prep diagnostics: `{output}/integration/prep/*.png`
+  Non-integrated UMAPs: `{output}/integration/nonintegrated/*.png`
+  Method UMAPs: `{output}/integration/{harmony,rpca,cca}/*.png`
 
 Projection onto the atlas is **not** part of `hkoca pipeline`; run
 `hkoca projection map` separately after integration or annotation.
@@ -160,9 +162,14 @@ Stage 1 (`prep`) normalizes RNA, runs SCTransform (glmGamPoi, regress
 `percent.mito`), PCA elbow, clustree, and silhouette-based resolution selection.
 Cell-type colors are shared with annotation via `hkoca/config/celltype_colors.yaml`
 (same hex codes in Python UMAPs and R ggplot/dittoSeq plots).
-Outputs: `prep/sct_prepared.rds`, `figures/elbow_plot.pdf`, `figures/clustree_sct.pdf`,
-`figures/silhouette_sct.pdf`, `tables/silhouette_scores.csv`,
-`tables/resolution_summary.csv`.
+Outputs: `prep/sct_prepared.rds`, `prep/elbow_plot.png`, `prep/clustree_sct.png`,
+`prep/silhouette_sct.png`, `nonintegrated/*.png`, `tables/silhouette_scores.csv`,
+`tables/resolution_summary.csv`. Silhouette selection ignores resolutions below
+`silhouette_min_resolution` (default 0.4) to avoid overly coarse clusterings.
+Per-method figures live under `{output}/harmony/`, `{output}/rpca/`, and
+`{output}/cca/`; integrated RDS files are in `{output}/objects/`. Logs are
+written directly under the integration output root (`integration_prep.log`,
+`integration_methods.log`).
 
 ### Projection (atlas mapping)
 

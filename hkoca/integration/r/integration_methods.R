@@ -113,6 +113,11 @@
         library(dplyr)
         library(reticulate)
     })
+    script_dir <- .get_script_dir()
+    viz_r <- file.path(script_dir, "integration_viz.R")
+    if (!file.exists(viz_r))
+        stop(sprintf("Missing integration visualization helpers: %s", viz_r))
+    source(viz_r, local = FALSE)
 }
 
 .remove_path <- function(path, label = "") {
@@ -141,131 +146,6 @@
         out[[child]][missing] <- parent_vals[missing]
     }
     out
-}
-
-# =============================================================================
-# Marker helpers (same logic as integration_prep.R)
-# =============================================================================
-
-.categorical_levels <- function(x) {
-    vals <- unique(trimws(as.character(x)))
-    sort(vals[nzchar(vals) & !is.na(vals)])
-}
-
-.metadata_split_columns <- function(meta) {
-    preferred <- c(
-        "sample_id", "model", "sort_podxl", "study", "source",
-        "diff_protocol", "sc_protocol", "sequencing", "genome_build",
-        "Age", "type", "transduction", "MOI", "AAV"
-    )
-    is_cat <- vapply(meta, function(col) {
-        if (!(is.character(col) || is.factor(col) || is.logical(col))) return(FALSE)
-        n <- length(.categorical_levels(col))
-        n >= 2L && n <= 24L
-    }, logical(1))
-    detected <- names(meta)[is_cat]
-    c(intersect(preferred, detected), setdiff(detected, preferred))
-}
-
-.split_plot_layout <- function(n_panels) {
-    if (n_panels <= 1L) return(list(num_columns = 1L, width = 8, height = 6))
-    num_columns <- if (n_panels <= 2L) n_panels else min(4L, ceiling(sqrt(n_panels)))
-    n_rows <- ceiling(n_panels / num_columns)
-    list(num_columns = num_columns, width = max(8, 4.5 * num_columns), height = max(6, 3.8 * n_rows))
-}
-
-.feature_plot_layout <- function(n_genes) {
-    nc <- min(3L, n_genes)
-    list(ncol = nc, width = max(9, 3.5 * nc), height = max(3.5, 3.5 * ceiling(n_genes / nc)))
-}
-
-.extract_level3_marker_groups <- function(yaml_path) {
-    if (is.na(yaml_path) || !nzchar(yaml_path) || !file.exists(yaml_path)) return(list())
-    raw <- tryCatch(yaml::read_yaml(yaml_path), error = function(e) NULL)
-    if (is.null(raw)) return(list())
-    groups <- list()
-    for (l1_name in names(raw)) {
-        l1 <- raw[[l1_name]]; if (!is.list(l1)) next
-        subs <- l1$subtypes; if (is.null(subs)) next
-        for (l2_name in names(subs)) {
-            l2 <- subs[[l2_name]]; if (!is.list(l2)) next
-            l3_subs <- l2$subtypes
-            if (!is.null(l3_subs)) {
-                for (l3_name in names(l3_subs)) {
-                    l3 <- l3_subs[[l3_name]]
-                    genes <- if (is.character(l3$marker_genes)) l3$marker_genes else character(0)
-                    if (length(genes) > 0) groups[[l3_name]] <- list(label = l3_name, genes = genes)
-                }
-            } else {
-                genes <- if (is.character(l2$marker_genes)) l2$marker_genes else character(0)
-                if (length(genes) > 0) groups[[l2_name]] <- list(label = l2_name, genes = genes)
-            }
-        }
-    }
-    groups
-}
-
-# =============================================================================
-# Shared visualization: UMAP (cluster + split) + FeaturePlots per method
-# =============================================================================
-
-.save_method_figures <- function(obj, out_dir, reduction, cluster_col,
-                                  markers_yaml_path, method_label) {
-    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-    Idents(obj) <- cluster_col
-    overall_path <- file.path(out_dir, "umap.pdf")
-    overall_plot <- DimPlot(obj, reduction = reduction, label = TRUE, repel = TRUE) +
-        ggtitle(sprintf("%s UMAP", method_label))
-    ggsave(overall_path, plot = overall_plot, width = 8, height = 6)
-    .log_info("[%s] Saved UMAP: %s", method_label, overall_path)
-
-    split_cols <- .metadata_split_columns(obj@meta.data)
-    for (col_name in split_cols) {
-        levels_n <- length(.categorical_levels(obj@meta.data[[col_name]]))
-        layout <- .split_plot_layout(levels_n)
-        out_path <- file.path(out_dir, sprintf("umap_split_%s.pdf", col_name))
-        split_plot <- DimPlot(obj, reduction = reduction, split.by = col_name,
-                              ncol = layout$num_columns, label = FALSE) +
-            ggtitle(sprintf("%s UMAP split by %s", method_label, col_name))
-        ggsave(out_path, plot = split_plot, width = layout$width, height = layout$height)
-        .log_info("[%s] Saved split UMAP: %s (column=%s, levels=%d)", method_label, out_path, col_name, levels_n)
-    }
-
-    # FeaturePlots use RNA assay for unscaled expression
-    DefaultAssay(obj) <- "RNA"
-    marker_groups <- .extract_level3_marker_groups(markers_yaml_path)
-    for (grp in marker_groups) {
-        present <- intersect(grp$genes, rownames(obj))
-        if (length(present) == 0) {
-            .log_info("[%s] FeaturePlot: skipping %s (no genes in object)", method_label, grp$label)
-            next
-        }
-        safe_label <- gsub("[^A-Za-z0-9_-]", "_", grp$label)
-        out_path <- file.path(out_dir, sprintf("featureplot_%s.png", safe_label))
-        layout <- .feature_plot_layout(length(present))
-        fp <- FeaturePlot(obj, features = present, reduction = reduction,
-                          ncol = layout$ncol, pt.size = 0.5, order = TRUE) &
-            theme(plot.title = element_text(size = 9))
-        fp_titled <- fp + patchwork::plot_annotation(title = grp$label)
-        ggsave(out_path, plot = fp_titled, width = layout$width, height = layout$height, dpi = 150)
-        .log_info("[%s] Saved FeaturePlot: %s (%d genes)", method_label, out_path, length(present))
-    }
-
-    # If celltype_final exists, add re-annotation UMAP
-    if ("celltype_final" %in% colnames(obj@meta.data)) {
-        Idents(obj) <- "celltype_final"
-        ann_path <- file.path(out_dir, "umap_celltype_final.pdf")
-        ann_plot <- DimPlot(obj, reduction = reduction, label = TRUE, repel = TRUE,
-                            group.by = "celltype_final") +
-            ggtitle(sprintf("%s UMAP (celltype_final)", method_label))
-        ggsave(ann_path, plot = ann_plot, width = 10, height = 7)
-        .log_info("[%s] Saved re-annotated UMAP: %s", method_label, ann_path)
-    }
-
-    # Reset to SCT for downstream steps
-    DefaultAssay(obj) <- "SCT"
-    invisible(NULL)
 }
 
 # =============================================================================
@@ -424,8 +304,8 @@
 
     obj <- .run_snapseed_reannotation(obj, "harmony_clusters",
                                       markers_yaml, ann_dir, "harmony")
-    .save_method_figures(obj, method_dir, "umap.harmony", "harmony_clusters",
-                         markers_yaml, "Harmony")
+    .save_integration_figures(obj, method_dir, "umap.harmony", "harmony_clusters",
+                         markers_yaml, "Harmony", feature_assay = "RNA")
     obj
 }
 
@@ -446,8 +326,8 @@
 
     obj <- .run_snapseed_reannotation(obj, "rpca_clusters",
                                       markers_yaml, ann_dir, "rpca")
-    .save_method_figures(obj, method_dir, "umap.rpca", "rpca_clusters",
-                         markers_yaml, "RPCA")
+    .save_integration_figures(obj, method_dir, "umap.rpca", "rpca_clusters",
+                         markers_yaml, "RPCA", feature_assay = "RNA")
     obj
 }
 
@@ -468,8 +348,8 @@
 
     obj <- .run_snapseed_reannotation(obj, "cca_clusters",
                                       markers_yaml, ann_dir, "cca")
-    .save_method_figures(obj, method_dir, "umap.cca", "cca_clusters",
-                         markers_yaml, "CCA")
+    .save_integration_figures(obj, method_dir, "umap.cca", "cca_clusters",
+                         markers_yaml, "CCA", feature_assay = "RNA")
     obj
 }
 
@@ -523,14 +403,11 @@ tryCatch({
         .log_info("Using markers YAML: %s", markers_yaml)
     }
 
-    fig_dir  <- file.path(output_dir, "figures")
     tab_dir  <- file.path(output_dir, "tables")
     obj_dir  <- file.path(output_dir, "objects")
-    log_dir  <- file.path(output_dir, "logs")
-    for (d in c(fig_dir, tab_dir, obj_dir, log_dir))
-        dir.create(d, recursive = TRUE, showWarnings = FALSE)
+    for (d in c(tab_dir, obj_dir)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
 
-    log_file <- file.path(log_dir, "integration_methods.log")
+    log_file <- file.path(output_dir, "integration_methods.log")
     sink(log_file, split = TRUE)
     on.exit(sink(), add = TRUE)
 
@@ -546,7 +423,7 @@ tryCatch({
 
     for (method in methods) {
         .log_info("Starting integration method: %s", method)
-        method_fig_dir <- file.path(fig_dir, method)
+        method_fig_dir <- file.path(output_dir, method)
         method_ann_dir <- file.path(output_dir, "annotation", method)
         out_rds <- file.path(obj_dir, sprintf("integrated_%s.rds", method))
 
