@@ -102,15 +102,27 @@
 
 .log_info <- function(...) cat(sprintf("[%s] INFO  %s\n", format(Sys.time(), "%H:%M:%S"), sprintf(...)))
 
+.log_warn <- function(...) cat(sprintf("[%s] WARN  %s\n", format(Sys.time(), "%H:%M:%S"), sprintf(...)))
+
 .log_error <- function(...) {
     cat(sprintf("[%s] ERROR %s\n", format(Sys.time(), "%H:%M:%S"), sprintf(...)), file = stderr())
+}
+
+.remove_path <- function(path, label = "") {
+    if (is.na(path) || !nzchar(path) || !file.exists(path)) return(invisible(FALSE))
+    ok <- file.remove(path)
+    if (ok) {
+        .log_info("Removed intermediate%s: %s", if (nzchar(label)) sprintf(" (%s)", label) else "", path)
+    } else {
+        .log_warn("Could not remove intermediate: %s", path)
+    }
+    invisible(ok)
 }
 
 .load_integration_packages <- function() {
     required <- c(
         "Seurat", "ggplot2", "patchwork", "clustree", "glmGamPoi",
-        "cluster", "digest", "jsonlite", "yaml", "dplyr", "tidyr",
-        "ggpubr", "rstatix", "dittoSeq"
+        "cluster", "digest", "jsonlite", "yaml", "dplyr", "tidyr"
     )
     missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
     if (length(missing))
@@ -130,9 +142,6 @@
         library(yaml)
         library(dplyr)
         library(tidyr)
-        library(ggpubr)
-        library(rstatix)
-        library(dittoSeq)
     })
 }
 
@@ -373,6 +382,7 @@
     cat("  --annotated_h5ad PATH    Annotated h5ad from hkoca annotation (optional)\n")
     cat("  --output_dir PATH        Output directory\n")
     cat("  --force_overwrite        Re-run even if outputs exist\n")
+    cat("  --remove_intermediate    Delete heavy intermediate files after success\n")
     cat("  --help                   Show this message\n")
 }
 
@@ -598,6 +608,19 @@ tryCatch({
         best_resolution = best_res
     )
     jsonlite::write_json(meta_out, meta_json, auto_unbox = TRUE, pretty = TRUE)
+
+    if (.as_bool(cfg$remove_intermediate, FALSE)) {
+        input_in_output <- tryCatch(
+            startsWith(
+                normalizePath(input_rds, mustWork = FALSE),
+                normalizePath(output_dir, mustWork = FALSE)
+            ),
+            error = function(e) FALSE
+        )
+        if (input_in_output) {
+            .remove_path(input_rds, "input RDS copy under output_dir")
+        }
+    }
 
     .log_info("Integration prep completed. Outputs under: %s", output_dir)
     quit(save = "no", status = 0)

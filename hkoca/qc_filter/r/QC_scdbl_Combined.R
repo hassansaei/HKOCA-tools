@@ -371,6 +371,7 @@ discover_rds_files <- function(root_dir, pattern = "\\.rds$", recursive = FALSE)
     cat("  --recursive_discovery    Enable recursive RDS file search\n")
     cat("  --rds_pattern REGEX      RDS file name regex\n")
     cat("  --force_overwrite        Force reprocessing of existing outputs\n")
+    cat("  --remove_intermediate    Delete heavy intermediate RDS after success\n")
     cat("  --help                   Show this message\n")
 }
 
@@ -3423,6 +3424,45 @@ if (!has_qc_summary && !has_dbl_summary) {
 # ==============================================================================
 # SECTION 9 - Final Pipeline Footer
 # ==============================================================================
+
+.remove_intermediate_outputs <- function() {
+    if (!.as_bool(cfg$remove_intermediate, FALSE)) return(invisible(NULL))
+
+    if (exists("DOUBLET_DIR") && dir.exists(DOUBLET_DIR)) {
+        call_files <- list.files(
+            DOUBLET_DIR,
+            pattern = "_with_doublet_calls\\.rds$",
+            full.names = TRUE,
+            ignore.case = TRUE
+        )
+        for (f in call_files) {
+            base <- sub("_with_doublet_calls\\.rds$", "", basename(f), ignore.case = TRUE)
+            singlets <- file.path(DOUBLET_DIR, paste0(base, "_singlets.rds"))
+            if (file.exists(singlets) && file.remove(f)) {
+                log_info("Removed intermediate doublet RDS: %s", f)
+            }
+        }
+    }
+
+    if (exists("FILTERED_DIR") && dir.exists(FILTERED_DIR) &&
+        exists("DOUBLET_DIR") && dir.exists(DOUBLET_DIR)) {
+        filt_files <- list.files(
+            FILTERED_DIR,
+            pattern = "_filtered\\.rds$",
+            full.names = TRUE,
+            ignore.case = TRUE
+        )
+        for (f in filt_files) {
+            base <- sub("_filtered\\.rds$", "", basename(f), ignore.case = TRUE)
+            singlets <- file.path(DOUBLET_DIR, paste0(base, "_singlets.rds"))
+            if (file.exists(singlets) && file.remove(f)) {
+                log_info("Removed intermediate filtered RDS: %s", f)
+            }
+        }
+    }
+}
+
+.remove_intermediate_outputs()
 
 log_info("==================================================")
 log_info("ALL SECTIONS COMPLETE")

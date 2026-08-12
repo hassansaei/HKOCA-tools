@@ -93,7 +93,7 @@
 .load_packages <- function() {
     required <- c(
         "Seurat", "ggplot2", "patchwork", "harmony",
-        "cluster", "digest", "jsonlite", "yaml", "dplyr"
+        "cluster", "digest", "jsonlite", "yaml", "dplyr", "reticulate"
     )
     missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
     if (length(missing))
@@ -111,7 +111,36 @@
         library(jsonlite)
         library(yaml)
         library(dplyr)
+        library(reticulate)
     })
+}
+
+.remove_path <- function(path, label = "") {
+    if (is.na(path) || !nzchar(path) || !file.exists(path)) return(invisible(FALSE))
+    ok <- file.remove(path)
+    if (ok) {
+        .log_info("Removed intermediate%s: %s", if (nzchar(label)) sprintf(" (%s)", label) else "", path)
+    } else {
+        .log_warn("Could not remove intermediate: %s", path)
+    }
+    invisible(ok)
+}
+
+.propagate_parent_labels_df <- function(assignments) {
+    if (is.null(assignments) || !ncol(assignments)) return(assignments)
+    label_cols <- grep("_score$|_auc$|_expr$", colnames(assignments), invert = TRUE, value = TRUE)
+    if (length(label_cols) < 2L) return(assignments)
+    out <- assignments
+    for (i in seq_len(length(label_cols) - 1L)) {
+        parent <- label_cols[i]
+        child <- label_cols[i + 1L]
+        parent_vals <- as.character(out[[parent]])
+        child_vals <- as.character(out[[child]])
+        missing <- !nzchar(child_vals) | is.na(child_vals) |
+            tolower(child_vals) %in% c("unassigned", "na", "nan")
+        out[[child]][missing] <- parent_vals[missing]
+    }
+    out
 }
 
 # =============================================================================
@@ -243,74 +272,134 @@
 # Snapseed re-annotation (Level 3 -> celltype_final)
 # =============================================================================
 
-.run_snapseed_reannotation <- function(obj, reduction, cluster_col, markers_yaml_path,
+.run_snapseed_reannotation <- function(obj, cluster_col, markers_yaml_path,
                                         ann_dir, method_label) {
     if (!nzchar(markers_yaml_path) || !file.exists(markers_yaml_path)) {
         .log_warn("[%s] Markers YAML not found, skipping re-annotation.", method_label)
         return(obj)
     }
-    if (!requireNamespace("snapseed", quietly = TRUE)) {
-        .log_warn("[%s] Package 'snapseed' not available, skipping re-annotation.", method_label)
+    if (!requireNamespace("reticulate", quietly = TRUE)) {
+        .log_warn("[%s] Package 'reticulate' not available, skipping re-annotation.", method_label)
         return(obj)
     }
-    dir.create(ann_dir, recursive = TRUE, showWarnings = FALSE)
 
-    .log_info("[%s] Running Snapseed re-annotation (Level 3).", method_label)
-    markers <- tryCatch(yaml::read_yaml(markers_yaml_path), error = function(e) NULL)
-    if (is.null(markers)) {
+    py <- Sys.getenv("HKOCA_ANNOTATION_PYTHON", unset = "")
+    if (!nzchar(py)) py <- Sys.getenv("RETICULATE_PYTHON", unset = "")
+    if (nzchar(py)) {
+        tryCatch(reticulate::use_python(py, required = TRUE), error = function(e) {
+            .log_warn("[%s] Could not use annotation Python (%s): %s", method_label, py, conditionMessage(e))
+        })
+    }
+    if (!reticulate::py_module_available("snapseed")) {
+        .log_warn(
+            "[%s] Python snapseed not available (set HKOCA_ANNOTATION_PYTHON to hkoca_harmonize python). Skipping re-annotation.",
+            method_label
+        )
+        return(obj)
+    }
+    if (!reticulate::py_module_available("scanpy")) {
+        .log_warn("[%s] Python scanpy not available, skipping re-annotation.", method_label)
+        return(obj)
+    }
+
+    dir.create(ann_dir, recursive = TRUE, showWarnings = FALSE)
+    .log_info("[%s] Running Snapseed re-annotation (Level 3 -> celltype_final).", method_label)
+
+    marker_dict <- tryCatch(yaml::read_yaml(markers_yaml_path), error = function(e) NULL)
+    if (is.null(marker_dict)) {
         .log_warn("[%s] Could not parse markers YAML, skipping re-annotation.", method_label)
         return(obj)
     }
 
-    # Flatten all Level 3 (or Level 2 when Level 3 absent) marker lists
-    flat_markers <- list()
-    for (l1_name in names(markers)) {
-        l1 <- markers[[l1_name]]; if (!is.list(l1)) next
-        subs <- l1$subtypes; if (is.null(subs)) next
-        for (l2_name in names(subs)) {
-            l2 <- subs[[l2_name]]; if (!is.list(l2)) next
-            l3_subs <- l2$subtypes
-            if (!is.null(l3_subs)) {
-                for (l3_name in names(l3_subs)) {
-                    l3 <- l3_subs[[l3_name]]
-                    genes <- if (is.character(l3$marker_genes)) l3$marker_genes else character(0)
-                    if (length(genes) > 0) flat_markers[[l3_name]] <- genes
-                }
-            } else {
-                genes <- if (is.character(l2$marker_genes)) l2$marker_genes else character(0)
-                if (length(genes) > 0) flat_markers[[l2_name]] <- genes
-            }
-        }
+    Idents(obj) <- cluster_col
+    DefaultAssay(obj) <- "RNA"
+    needs_norm <- TRUE
+    if (exists("Layers", mode = "function")) {
+        layers <- tryCatch(Layers(obj[["RNA"]]), error = function(e) character(0))
+        needs_norm <- !("data" %in% layers)
     }
-    if (length(flat_markers) == 0) {
-        .log_warn("[%s] No marker groups extracted, skipping re-annotation.", method_label)
+    if (needs_norm && exists("NormalizeData", mode = "function")) {
+        obj <- NormalizeData(obj, assay = "RNA", verbose = FALSE)
+    }
+
+    data_mat <- tryCatch(
+        GetAssayData(obj, assay = "RNA", layer = "data"),
+        error = function(e) GetAssayData(obj, assay = "RNA", slot = "data")
+    )
+    snapseed <- reticulate::import("snapseed")
+    sc <- reticulate::import("scanpy")
+
+    X <- reticulate::r_to_py(Matrix::t(data_mat))
+    obs <- reticulate::r_to_py(obj@meta.data, convert = TRUE)
+    var <- reticulate::r_to_py(data.frame(index = rownames(obj)), convert = TRUE)
+    adata <- sc$AnnData(X = X, obs = obs, var = var)
+    adata$obs[[cluster_col]] <- reticulate::r_to_py(as.character(Idents(obj)))
+
+    marker_py <- reticulate::r_to_py(marker_dict, convert = TRUE)
+    results <- tryCatch(
+        snapseed$annotate_hierarchy(adata, marker_py, group_name = cluster_col),
+        error = function(e) {
+            .log_warn("[%s] Snapseed failed: %s", method_label, conditionMessage(e))
+            NULL
+        }
+    )
+    if (is.null(results)) return(obj)
+
+    assignments <- reticulate::py_to_r(results[["assignments"]])
+    metrics <- tryCatch(reticulate::py_to_r(results[["metrics"]]), error = function(e) NULL)
+    if (is.null(assignments) || !nrow(assignments)) {
+        .log_warn("[%s] Snapseed returned no assignments.", method_label)
         return(obj)
     }
 
-    Idents(obj) <- cluster_col
-    DefaultAssay(obj) <- "SCT"
-    ann_result <- tryCatch(
-        snapseed::annotate(obj, markers = flat_markers, group_by = cluster_col),
-        error = function(e) { .log_warn("[%s] Snapseed failed: %s", method_label, conditionMessage(e)); NULL }
-    )
-    if (is.null(ann_result)) return(obj)
-
-    # Snapseed returns a list with $predictions data frame (cluster, label, score, auc, expr)
-    preds <- ann_result$predictions
-    if (!is.null(preds) && "label" %in% colnames(preds)) {
-        cluster_map <- setNames(as.character(preds$label), as.character(preds$cluster))
-        obj$celltype_final <- cluster_map[as.character(Idents(obj))]
-
-        score_col <- intersect(c("score", "auc", "mean_exp"), colnames(preds))[1]
-        if (!is.na(score_col)) {
-            score_map <- setNames(preds[[score_col]], as.character(preds$cluster))
-            obj$celltype_final_score <- score_map[as.character(Idents(obj))]
-        }
-
-        ann_csv <- file.path(ann_dir, "celltype_final_per_cluster.csv")
-        write.csv(preds, ann_csv, row.names = FALSE)
-        .log_info("[%s] Saved re-annotation table: %s", method_label, ann_csv)
+    if (!"cluster" %in% colnames(assignments) && !is.null(rownames(assignments))) {
+        assignments$cluster <- rownames(assignments)
     }
+    assignments <- .propagate_parent_labels_df(assignments)
+
+    label_cols <- grep("_score$|_auc$|_expr$", colnames(assignments), invert = TRUE, value = TRUE)
+    level3_col <- tail(label_cols, 1)
+    cluster_ids <- if ("cluster" %in% colnames(assignments)) {
+        as.character(assignments$cluster)
+    } else {
+        rownames(assignments)
+    }
+    cluster_to_label <- setNames(as.character(assignments[[level3_col]]), cluster_ids)
+    obj$celltype_final <- unname(cluster_to_label[as.character(Idents(obj))])
+
+    score_col <- paste0(level3_col, "_score")
+    if (score_col %in% colnames(assignments)) {
+        score_map <- setNames(as.numeric(assignments[[score_col]]), cluster_ids)
+        obj$celltype_final_score <- unname(score_map[as.character(Idents(obj))])
+    }
+
+    ann_csv <- file.path(ann_dir, "celltype_final_per_cluster.csv")
+    write.csv(assignments, ann_csv, row.names = FALSE)
+    .log_info("[%s] Saved re-annotation table: %s", method_label, ann_csv)
+
+    if (!is.null(metrics)) {
+        metrics_dir <- file.path(ann_dir, "snapseed_metrics")
+        dir.create(metrics_dir, recursive = TRUE, showWarnings = FALSE)
+        if (is.list(metrics)) {
+            for (nm in names(metrics)) {
+                metric_df <- tryCatch(reticulate::py_to_r(metrics[[nm]]), error = function(e) NULL)
+                if (!is.null(metric_df) && nrow(metric_df) > 0) {
+                    write.csv(metric_df, file.path(metrics_dir, paste0(nm, ".csv")), row.names = FALSE)
+                }
+            }
+        }
+    }
+
+    per_cell <- data.frame(
+        cell = colnames(obj),
+        cluster = as.character(Idents(obj)),
+        celltype_final = obj$celltype_final,
+        celltype_final_score = if ("celltype_final_score" %in% colnames(obj@meta.data)) obj$celltype_final_score else NA_real_,
+        stringsAsFactors = FALSE
+    )
+    write.csv(per_cell, file.path(ann_dir, "celltype_final_per_cell.csv"), row.names = FALSE)
+    .log_info("[%s] Saved per-cell re-annotation: %s", method_label, file.path(ann_dir, "celltype_final_per_cell.csv"))
+
     obj
 }
 
@@ -333,7 +422,7 @@
     obj <- RunUMAP(obj, reduction = "harmony", dims = dims,
                    reduction.name = "umap.harmony", verbose = FALSE)
 
-    obj <- .run_snapseed_reannotation(obj, "umap.harmony", "harmony_clusters",
+    obj <- .run_snapseed_reannotation(obj, "harmony_clusters",
                                       markers_yaml, ann_dir, "harmony")
     .save_method_figures(obj, method_dir, "umap.harmony", "harmony_clusters",
                          markers_yaml, "Harmony")
@@ -355,7 +444,7 @@
     obj <- RunUMAP(obj, reduction = "integrated.rpca", dims = dims,
                    reduction.name = "umap.rpca", verbose = FALSE)
 
-    obj <- .run_snapseed_reannotation(obj, "umap.rpca", "rpca_clusters",
+    obj <- .run_snapseed_reannotation(obj, "rpca_clusters",
                                       markers_yaml, ann_dir, "rpca")
     .save_method_figures(obj, method_dir, "umap.rpca", "rpca_clusters",
                          markers_yaml, "RPCA")
@@ -377,7 +466,7 @@
     obj <- RunUMAP(obj, reduction = "integrated.cca", dims = dims,
                    reduction.name = "umap.cca", verbose = FALSE)
 
-    obj <- .run_snapseed_reannotation(obj, "umap.cca", "cca_clusters",
+    obj <- .run_snapseed_reannotation(obj, "cca_clusters",
                                       markers_yaml, ann_dir, "cca")
     .save_method_figures(obj, method_dir, "umap.cca", "cca_clusters",
                          markers_yaml, "CCA")
@@ -410,6 +499,7 @@ tryCatch({
     prepared_rds  <- .resolve_path(cfg$prepared_rds)
     output_dir    <- .resolve_path(cfg$output_dir %||% "integration_results")
     force_flag    <- .as_bool(cfg$force_overwrite, FALSE)
+    remove_flag   <- .as_bool(cfg$remove_intermediate, FALSE)
     methods_raw   <- tolower(trimws(cfg$methods %||% "harmony,rpca,cca"))
     methods       <- trimws(unlist(strsplit(methods_raw, ",", fixed = TRUE)))
     methods       <- methods[nzchar(methods)]
@@ -507,6 +597,12 @@ tryCatch({
     if (failed > 0) {
         .log_warn("%d method(s) failed. Check logs.", failed)
         quit(save = "no", status = 1)
+    }
+
+    if (remove_flag) {
+        prep_meta <- file.path(dirname(prepared_rds), ".sct_prepared.meta.json")
+        .remove_path(prepared_rds, "SCT prepared RDS")
+        .remove_path(prep_meta, "prep metadata")
     }
 
     .log_info("All integration methods completed. Outputs under: %s", output_dir)

@@ -25,3 +25,5 @@ dependencies:
   - r-ggpubr
   - r-rstatix
   - bioconductor-dittoseq
+  - bioconductor-singlecellexperiment
+  - r-reticulate

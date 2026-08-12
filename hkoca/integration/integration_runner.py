@@ -10,12 +10,13 @@ from importlib import resources
 from pathlib import Path
 
 from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
-
 from hkoca.config import celltype_colors_path
+from hkoca.env_check import log_env_problems, verify_stage_env
 
 logger = logging.getLogger("hkoca.integration")
 
 DEFAULT_INTEGRATION_ENV = "hkoca_integration"
+DEFAULT_ANNOTATION_ENV = "hkoca_harmonize"
 
 
 def r_script_path(stage: str = "prep") -> Path:
@@ -38,6 +39,17 @@ def resolve_integration_env_prefix() -> Path | None:
     if not env_name:
         env_name = DEFAULT_INTEGRATION_ENV
     return resolve_env_prefix(env_name, "Rscript")
+
+
+def resolve_annotation_python() -> str | None:
+    env_name = os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV).strip()
+    if not env_name:
+        env_name = DEFAULT_ANNOTATION_ENV
+    prefix = resolve_env_prefix(env_name, "python")
+    if prefix is None:
+        return None
+    py = prefix / "bin" / "python"
+    return str(py) if py.is_file() else None
 
 
 def find_rscript() -> str:
@@ -74,7 +86,46 @@ def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
     prefix = Path(rscript).resolve().parent.parent
     env = subprocess_env_for_prefix(prefix)
     env["HKOCA_CELLTYPE_COLORS"] = str(celltype_colors_path())
+
+    ann_py = resolve_annotation_python()
+    if ann_py:
+        env["HKOCA_ANNOTATION_PYTHON"] = ann_py
+        env["RETICULATE_PYTHON"] = ann_py
+        logger.info("Snapseed re-annotation Python: %s", ann_py)
+    else:
+        logger.warning(
+            "Annotation env not found (%s). Snapseed re-annotation will be skipped in integration run.",
+            os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV),
+        )
+
     return env
+
+
+def _verify_integration_env(stage: str = "integration", *, require_annotation: bool = False) -> int:
+    problems = verify_stage_env(stage)
+    if stage == "run":
+        ann_env = os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV).strip() or DEFAULT_ANNOTATION_ENV
+        ann_prefix = resolve_env_prefix(ann_env, "python")
+        if ann_prefix is None:
+            msg = (
+                f"annotation: conda env '{ann_env}' not found. "
+                "Snapseed re-annotation requires hkoca_harmonize (or set HKOCA_ANNOTATION_ENV)."
+            )
+            if require_annotation:
+                problems.append(msg)
+            else:
+                logger.warning(msg)
+        else:
+            ann_problems = verify_stage_env("harmonize")
+            for msg in ann_problems:
+                if require_annotation:
+                    problems.append(f"annotation: {msg}")
+                else:
+                    logger.warning("annotation: %s", msg)
+    if problems:
+        log_env_problems(stage, problems)
+        return 1
+    return 0
 
 
 def default_config_path() -> Path:
@@ -91,6 +142,7 @@ def build_prep_command(
     annotated_h5ad: str | None = None,
     config: str | None = None,
     force_overwrite: bool = False,
+    remove_intermediate: bool = False,
     extra_args: list[str] | None = None,
 ) -> list[str]:
     cmd = [
@@ -109,6 +161,8 @@ def build_prep_command(
         cmd.extend(["--annotated_h5ad", os.path.abspath(annotated_h5ad)])
     if force_overwrite:
         cmd.append("--force_overwrite")
+    if remove_intermediate:
+        cmd.append("--remove_intermediate")
     if extra_args:
         cmd.extend(extra_args)
     return cmd
@@ -121,9 +175,10 @@ def build_run_command(
     methods: str | None = None,
     config: str | None = None,
     force_overwrite: bool = False,
+    remove_intermediate: bool = False,
     extra_args: list[str] | None = None,
 ) -> list[str]:
-    from hkoca.config import celltype_colors_path, snapseed_markers_path
+    from hkoca.config import snapseed_markers_path
 
     cmd = [
         find_rscript(),
@@ -143,6 +198,8 @@ def build_run_command(
         cmd.extend(["--methods", methods])
     if force_overwrite:
         cmd.append("--force_overwrite")
+    if remove_intermediate:
+        cmd.append("--remove_intermediate")
     if extra_args:
         cmd.extend(extra_args)
     return cmd
@@ -155,11 +212,15 @@ def run_methods(
     methods: str | None = None,
     config: str | None = None,
     force_overwrite: bool = False,
+    remove_intermediate: bool = False,
     dry_run: bool = False,
     extra_args: list[str] | None = None,
 ) -> int:
     if not dry_run and not os.path.isfile(prepared_rds):
         logger.error("Prepared RDS does not exist: %s", prepared_rds)
+        return 1
+
+    if not dry_run and _verify_integration_env("run") != 0:
         return 1
 
     try:
@@ -169,6 +230,7 @@ def run_methods(
             methods=methods,
             config=config,
             force_overwrite=force_overwrite,
+            remove_intermediate=remove_intermediate,
             extra_args=extra_args,
         )
     except FileNotFoundError as exc:
@@ -195,6 +257,7 @@ def run_prep(
     annotated_h5ad: str | None = None,
     config: str | None = None,
     force_overwrite: bool = False,
+    remove_intermediate: bool = False,
     dry_run: bool = False,
     extra_args: list[str] | None = None,
 ) -> int:
@@ -205,6 +268,9 @@ def run_prep(
         logger.error("Annotated h5ad does not exist: %s", annotated_h5ad)
         return 1
 
+    if not dry_run and _verify_integration_env("integration") != 0:
+        return 1
+
     try:
         cmd = build_prep_command(
             input_rds=input_rds,
@@ -212,6 +278,7 @@ def run_prep(
             annotated_h5ad=annotated_h5ad,
             config=config,
             force_overwrite=force_overwrite,
+            remove_intermediate=remove_intermediate,
             extra_args=extra_args,
         )
     except FileNotFoundError as exc:

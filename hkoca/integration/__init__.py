@@ -98,6 +98,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Re-run prep even when outputs exist",
     )
+    p_prep.add_argument(
+        "--remove-intermediate",
+        action="store_true",
+        help="Delete heavy intermediate files after successful prep (input RDS only if under output-dir)",
+    )
     p_prep.add_argument("--dry-run", action="store_true")
     p_prep.add_argument("-v", "--verbose", action="store_true")
 
@@ -135,6 +140,11 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="force_overwrite",
         action="store_true",
         help="Re-run even when per-method RDS already exists",
+    )
+    p_run.add_argument(
+        "--remove-intermediate",
+        action="store_true",
+        help="Delete prep/sct_prepared.rds after successful integration run",
     )
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("-v", "--verbose", action="store_true")
@@ -183,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
             annotated_h5ad=args.annotated_h5ad,
             config=args.config,
             force_overwrite=bool(args.force_overwrite),
+            remove_intermediate=bool(getattr(args, "remove_intermediate", False)),
             dry_run=bool(args.dry_run),
         )
 
@@ -196,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             methods=methods_str,
             config=args.config,
             force_overwrite=bool(args.force_overwrite),
+            remove_intermediate=bool(getattr(args, "remove_intermediate", False)),
             dry_run=bool(args.dry_run),
         )
 

@@ -138,6 +138,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Re-run harmonize and QC even when outputs already exist (default: skip existing)",
     )
     parser.add_argument(
+        "--remove-intermediate",
+        action="store_true",
+        help="Delete heavy intermediate RDS files after successful QC/doublet steps",
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
         default=True,
@@ -230,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         recursive=True,
         rds_pattern=qc_opts.rds_pattern,
         force_overwrite=qc_opts.force_overwrite,
+        remove_intermediate=bool(qc_opts.remove_intermediate),
         dry_run=qc_opts.dry_run,
     )
 

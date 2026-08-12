@@ -112,7 +112,14 @@ def main(argv: list[str] | None = None) -> int:
     transgene_names = resolve_transgenes(args, cfg)
 
     # Heavy deps loaded only when a real run is requested
+    from hkoca.env_check import log_env_problems, verify_stage_env
     from hkoca.qc_filter.harmonize import pipeline as P
+
+    if not args.summary_only:
+        problems = verify_stage_env("harmonize")
+        if problems:
+            log_env_problems("harmonize", problems)
+            return 1
 
     P.setup_logging(working_dir)
     logger.info("Python         : %s", sys.version.split()[0])

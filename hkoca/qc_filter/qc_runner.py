@@ -17,6 +17,7 @@ from importlib import resources
 from pathlib import Path
 
 from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
+from hkoca.env_check import log_env_problems, verify_stage_env
 
 logger = logging.getLogger("hkoca.qc_filter")
 
@@ -94,6 +95,7 @@ def build_qc_command(
     recursive: bool = True,
     rds_pattern: str = r"_harmonized\.rds$",
     force_overwrite: bool = False,
+    remove_intermediate: bool = False,
     extra_args: list[str] | None = None,
 ) -> list[str]:
     script = str(r_script_path())
@@ -116,6 +118,8 @@ def build_qc_command(
         cmd.extend(["--recursive_discovery", "TRUE"])
     if force_overwrite:
         cmd.append("--force_overwrite")
+    if remove_intermediate:
+        cmd.append("--remove_intermediate")
     if extra_args:
         cmd.extend(extra_args)
     return cmd
@@ -130,12 +134,19 @@ def run_qc(
     recursive: bool = True,
     rds_pattern: str = r"_harmonized\.rds$",
     force_overwrite: bool = False,
+    remove_intermediate: bool = False,
     dry_run: bool = False,
     extra_args: list[str] | None = None,
 ) -> int:
     if not dry_run and not os.path.isdir(rds_dir):
         logger.error("RDS directory does not exist: %s", rds_dir)
         return 1
+
+    if not dry_run:
+        problems = verify_stage_env("qc")
+        if problems:
+            log_env_problems("qc", problems)
+            return 1
 
     try:
         cmd = build_qc_command(
@@ -146,6 +157,7 @@ def run_qc(
             recursive=recursive,
             rds_pattern=rds_pattern,
             force_overwrite=force_overwrite,
+            remove_intermediate=remove_intermediate,
             extra_args=extra_args,
         )
     except FileNotFoundError as exc:

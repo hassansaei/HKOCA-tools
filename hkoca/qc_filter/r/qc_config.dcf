@@ -49,3 +49,6 @@ platform_dbr.pipseq: 0.07
 # Optional H5AD export after QC
 run_h5ad_conversion: TRUE
 h5ad_output_subdir: h5ad_converted
+
+# Delete heavy intermediate RDS files after successful QC/doublet steps
+remove_intermediate: FALSE

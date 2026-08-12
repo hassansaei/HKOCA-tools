@@ -28,6 +28,9 @@ silhouette_seed: 42
 # Skip when prep outputs already exist
 skip_existing: TRUE
 
+# Delete heavy intermediate files after a successful stage
+remove_intermediate: FALSE
+
 # Shared HKOCA cell-type colors (same as annotation module)
 celltype_colors_yaml: null
 
