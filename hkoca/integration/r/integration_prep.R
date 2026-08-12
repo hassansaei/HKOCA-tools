@@ -176,6 +176,181 @@
     obj
 }
 
+.categorical_levels <- function(x) {
+    vals <- unique(trimws(as.character(x)))
+    vals <- vals[nzchar(vals) & !is.na(vals)]
+    sort(vals)
+}
+
+.metadata_split_columns <- function(meta) {
+    preferred <- c(
+        "sample_id", "model", "sort_podxl", "study", "source",
+        "diff_protocol", "sc_protocol", "sequencing", "genome_build",
+        "Age", "type", "transduction", "MOI", "AAV"
+    )
+    is_categorical <- vapply(meta, function(col) {
+        if (!(is.character(col) || is.factor(col) || is.logical(col))) return(FALSE)
+        n_levels <- length(.categorical_levels(col))
+        n_levels >= 2L && n_levels <= 24L
+    }, logical(1))
+    detected <- names(meta)[is_categorical]
+    c(intersect(preferred, detected), setdiff(detected, preferred))
+}
+
+.split_plot_layout <- function(n_panels) {
+    if (n_panels <= 1L) {
+        return(list(num_columns = 1L, width = 8, height = 6))
+    }
+    num_columns <- if (n_panels <= 2L) n_panels else min(4L, ceiling(sqrt(n_panels)))
+    n_rows <- ceiling(n_panels / num_columns)
+    width <- max(8, 4.5 * num_columns)
+    height <- max(6, 3.8 * n_rows)
+    list(num_columns = num_columns, width = width, height = height)
+}
+
+# Extract Level 3 subtypes from the marker YAML. Returns a named list where each
+# entry is list(label = "Podocytes", genes = c("NPHS1", ...)).
+.extract_level3_marker_groups <- function(yaml_path) {
+    if (is.na(yaml_path) || !nzchar(yaml_path) || !file.exists(yaml_path))
+        return(list())
+    raw <- tryCatch(yaml::read_yaml(yaml_path), error = function(e) NULL)
+    if (is.null(raw)) return(list())
+    groups <- list()
+    for (l1_name in names(raw)) {
+        l1 <- raw[[l1_name]]
+        if (!is.list(l1)) next
+        subs <- l1$subtypes
+        if (is.null(subs)) next
+        for (l2_name in names(subs)) {
+            l2 <- subs[[l2_name]]
+            if (!is.list(l2)) next
+            l3_subs <- l2$subtypes
+            if (!is.null(l3_subs)) {
+                for (l3_name in names(l3_subs)) {
+                    l3 <- l3_subs[[l3_name]]
+                    genes <- if (is.character(l3$marker_genes)) l3$marker_genes else character(0)
+                    if (length(genes) > 0)
+                        groups[[l3_name]] <- list(label = l3_name, genes = genes)
+                }
+            } else {
+                genes <- if (is.character(l2$marker_genes)) l2$marker_genes else character(0)
+                if (length(genes) > 0)
+                    groups[[l2_name]] <- list(label = l2_name, genes = genes)
+            }
+        }
+    }
+    groups
+}
+
+# Size a FeaturePlot panel: 3 columns, height scales with rows.
+.feature_plot_layout <- function(n_genes) {
+    ncol <- min(3L, n_genes)
+    nrow <- ceiling(n_genes / ncol)
+    list(ncol = ncol, width = max(9, 3.5 * ncol), height = max(3.5, 3.5 * nrow))
+}
+
+.save_visualization_plots <- function(obj, out_dir, reduction, cluster_col,
+                                      markers_yaml_path, method_label) {
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+    Idents(obj) <- cluster_col
+    overall_path <- file.path(out_dir, "umap.pdf")
+    overall_plot <- DimPlot(
+        obj,
+        reduction = reduction,
+        label = TRUE,
+        repel = TRUE
+    ) + ggtitle(sprintf("%s UMAP", method_label))
+    ggsave(overall_path, plot = overall_plot, width = 8, height = 6)
+    .log_info("[%s] Saved UMAP: %s", method_label, overall_path)
+
+    split_cols <- .metadata_split_columns(obj@meta.data)
+    split_outputs <- list()
+    for (col_name in split_cols) {
+        levels_n <- length(.categorical_levels(obj@meta.data[[col_name]]))
+        layout <- .split_plot_layout(levels_n)
+        out_path <- file.path(out_dir, sprintf("umap_split_%s.pdf", col_name))
+        split_plot <- DimPlot(
+            obj,
+            reduction = reduction,
+            split.by = col_name,
+            ncol = layout$num_columns,
+            label = FALSE
+        ) + ggtitle(sprintf("%s UMAP split by %s", method_label, col_name))
+        ggsave(out_path, plot = split_plot, width = layout$width, height = layout$height)
+        .log_info(
+            "[%s] Saved split UMAP: %s (column=%s, levels=%d, ncol=%d, size=%.1fx%.1f)",
+            method_label, out_path, col_name, levels_n, layout$num_columns,
+            layout$width, layout$height
+        )
+        split_outputs[[col_name]] <- list(
+            path = out_path, n_levels = levels_n, ncol = layout$num_columns,
+            width = layout$width, height = layout$height
+        )
+    }
+
+    marker_groups <- .extract_level3_marker_groups(markers_yaml_path)
+    feature_outputs <- list()
+    if (length(marker_groups) > 0) {
+        DefaultAssay(obj) <- "SCT"
+        for (grp in marker_groups) {
+            present <- intersect(grp$genes, rownames(obj))
+            if (length(present) == 0) {
+                .log_info("[%s] FeaturePlot: skipping %s (no genes found in object)", method_label, grp$label)
+                next
+            }
+            safe_label <- gsub("[^A-Za-z0-9_-]", "_", grp$label)
+            out_path <- file.path(out_dir, sprintf("featureplot_%s.png", safe_label))
+            layout <- .feature_plot_layout(length(present))
+            fp <- FeaturePlot(
+                obj,
+                features = present,
+                reduction = reduction,
+                ncol = layout$ncol,
+                pt.size = 0.5,
+                order = TRUE
+            ) & theme(plot.title = element_text(size = 9))
+            fp_titled <- fp + patchwork::plot_annotation(title = grp$label)
+            ggsave(out_path, plot = fp_titled, width = layout$width, height = layout$height, dpi = 150)
+            .log_info(
+                "[%s] Saved FeaturePlot: %s (genes=%d, ncol=%d, size=%.1fx%.1f)",
+                method_label, out_path, length(present), layout$ncol, layout$width, layout$height
+            )
+            feature_outputs[[grp$label]] <- list(
+                path = out_path, genes = present, ncol = layout$ncol
+            )
+        }
+    }
+
+    list(
+        overall = overall_path,
+        split = split_outputs,
+        feature_plots = feature_outputs,
+        split_columns = split_cols
+    )
+}
+
+.run_nonintegrated_umap_and_plots <- function(obj, out_dir, dims, cluster_col,
+                                              markers_yaml_path) {
+    .log_info("Running non-integrated UMAP from PCA.")
+    obj <- RunUMAP(
+        obj,
+        dims = dims,
+        reduction = "pca",
+        reduction.name = "umap_unintegrated",
+        reduction.key = "UMAPUN_",
+        verbose = FALSE
+    )
+    vis <- .save_visualization_plots(
+        obj, out_dir,
+        reduction = "umap_unintegrated",
+        cluster_col = cluster_col,
+        markers_yaml_path = markers_yaml_path,
+        method_label = "Non-integrated"
+    )
+    list(object = obj, outputs = vis)
+}
+
 .calc_silhouette <- function(obj, res, prefix, dims, n_subsample = 5000, seed = 42L) {
     Idents(obj) <- paste0(prefix, res)
     set.seed(seed)
@@ -233,10 +408,27 @@ tryCatch({
         stop("Provide --input_rds pointing to an existing QC-filtered Seurat RDS.")
 
     prep_dir <- file.path(output_dir, "prep")
-    fig_dir <- file.path(output_dir, "figures")
-    tab_dir <- file.path(output_dir, "tables")
-    log_dir <- file.path(output_dir, "logs")
+    fig_dir  <- file.path(output_dir, "figures")
+    tab_dir  <- file.path(output_dir, "tables")
+    log_dir  <- file.path(output_dir, "logs")
     for (d in c(prep_dir, fig_dir, tab_dir, log_dir)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+
+    markers_yaml <- .resolve_path(cfg$markers_yaml)
+    if (is.na(markers_yaml) || !nzchar(markers_yaml)) {
+        markers_yaml <- Sys.getenv("HKOCA_MARKERS_YAML", unset = "")
+    }
+    if (!nzchar(markers_yaml)) {
+        markers_yaml <- normalizePath(
+            file.path(script_dir, "..", "..", "config", "snapseed_markers_v4.yaml"),
+            mustWork = FALSE
+        )
+    }
+    if (file.exists(markers_yaml)) {
+        .log_info("Using markers YAML: %s", markers_yaml)
+    } else {
+        .log_info("Markers YAML not found, FeaturePlots will be skipped: %s", markers_yaml)
+        markers_yaml <- ""
+    }
 
     log_file <- file.path(log_dir, "integration_prep.log")
     sink(log_file, split = TRUE)
@@ -373,6 +565,17 @@ tryCatch({
     write.csv(summary_df, summary_csv, row.names = FALSE)
     .log_info("Recommended resolution (silhouette): %s", best_res)
 
+    cluster_col <- paste0(cluster_prefix, best_res)
+    if (!cluster_col %in% colnames(obj@meta.data)) {
+        stop(sprintf("Selected cluster column not found in metadata: %s", cluster_col))
+    }
+    nonint_fig_dir <- file.path(fig_dir, "unintegrated")
+    nonint_result <- .run_nonintegrated_umap_and_plots(
+        obj, nonint_fig_dir, neighbor_dims, cluster_col, markers_yaml
+    )
+    obj <- nonint_result$object
+    nonintegrated_outputs <- nonint_result$outputs
+
     .log_info("Saving prepared object: %s", prepared_rds)
     saveRDS(obj, prepared_rds)
 
@@ -386,6 +589,9 @@ tryCatch({
             elbow_plot = elbow_path,
             clustree_plot = clustree_path,
             silhouette_plot = sil_plot_path,
+            nonintegrated_umap = nonintegrated_outputs$overall,
+            nonintegrated_split_columns = nonintegrated_outputs$split_columns,
+            nonintegrated_feature_plots = length(nonintegrated_outputs$feature_plots),
             silhouette_csv = sil_csv,
             resolution_summary = summary_csv
         ),

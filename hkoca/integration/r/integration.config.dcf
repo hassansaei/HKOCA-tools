@@ -30,3 +30,6 @@ skip_existing: TRUE
 
 # Shared HKOCA cell-type colors (same as annotation module)
 celltype_colors_yaml: null
+
+# Marker YAML for FeaturePlots (default: packaged snapseed_markers_v4.yaml)
+markers_yaml: null
