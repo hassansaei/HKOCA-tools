@@ -11,7 +11,6 @@ from pathlib import Path
 
 from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
 from hkoca.config import celltype_colors_path
-from hkoca.env_check import log_env_problems, verify_stage_env
 
 logger = logging.getLogger("hkoca.integration")
 
@@ -99,33 +98,6 @@ def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
         )
 
     return env
-
-
-def _verify_integration_env(*, check_annotation: bool = False, require_annotation: bool = False) -> int:
-    problems = verify_stage_env("integration")
-    if check_annotation:
-        ann_env = os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV).strip() or DEFAULT_ANNOTATION_ENV
-        ann_prefix = resolve_env_prefix(ann_env, "python")
-        if ann_prefix is None:
-            msg = (
-                f"annotation: conda env '{ann_env}' not found. "
-                "Snapseed re-annotation requires hkoca_harmonize (or set HKOCA_ANNOTATION_ENV)."
-            )
-            if require_annotation:
-                problems.append(msg)
-            else:
-                logger.warning(msg)
-        else:
-            ann_problems = verify_stage_env("harmonize")
-            for msg in ann_problems:
-                if require_annotation:
-                    problems.append(f"annotation: {msg}")
-                else:
-                    logger.warning("annotation: %s", msg)
-    if problems:
-        log_env_problems("integration", problems)
-        return 1
-    return 0
 
 
 def default_config_path() -> Path:
@@ -220,9 +192,6 @@ def run_methods(
         logger.error("Prepared RDS does not exist: %s", prepared_rds)
         return 1
 
-    if not dry_run and _verify_integration_env(check_annotation=True) != 0:
-        return 1
-
     try:
         cmd = build_run_command(
             prepared_rds=prepared_rds,
@@ -266,9 +235,6 @@ def run_prep(
         return 1
     if annotated_h5ad and not dry_run and not os.path.isfile(annotated_h5ad):
         logger.error("Annotated h5ad does not exist: %s", annotated_h5ad)
-        return 1
-
-    if not dry_run and _verify_integration_env() != 0:
         return 1
 
     try:

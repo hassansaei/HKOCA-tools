@@ -7,7 +7,6 @@ import logging
 import sys
 from pathlib import Path
 
-from hkoca.env_check import log_env_problems, verify_stage_env
 from hkoca.projection.config import load_projection_config, packaged_config_path
 from hkoca.projection.runner import project_query
 
@@ -176,11 +175,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         logger.info("Dry run: projection map would run with hkoca_harmonize env.")
         return 0
-
-    problems = verify_stage_env("harmonize")
-    if problems:
-        log_env_problems("harmonize", problems)
-        return 1
 
     try:
         out_path = project_query(

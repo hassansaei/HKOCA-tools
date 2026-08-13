@@ -17,7 +17,6 @@ from importlib import resources
 from pathlib import Path
 
 from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
-from hkoca.env_check import log_env_problems, verify_stage_env
 
 logger = logging.getLogger("hkoca.qc_filter")
 
@@ -141,12 +140,6 @@ def run_qc(
     if not dry_run and not os.path.isdir(rds_dir):
         logger.error("RDS directory does not exist: %s", rds_dir)
         return 1
-
-    if not dry_run:
-        problems = verify_stage_env("qc")
-        if problems:
-            log_env_problems("qc", problems)
-            return 1
 
     try:
         cmd = build_qc_command(
