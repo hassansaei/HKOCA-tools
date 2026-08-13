@@ -284,6 +284,86 @@
 }
 
 # =============================================================================
+# Batch / layer preparation for Seurat v5 IntegrateLayers
+# =============================================================================
+
+.count_batch_levels <- function(obj, batch_col) {
+    vals <- as.character(obj@meta.data[[batch_col]])
+    length(unique(vals[nzchar(vals) & !is.na(vals)]))
+}
+
+.detect_batch_column <- function(obj, preferred = NULL) {
+    if (!is.null(preferred) && nzchar(preferred)) {
+        if (!preferred %in% colnames(obj@meta.data)) {
+            stop(sprintf("Configured integration_batch_key '%s' not found in metadata.", preferred))
+        }
+        return(preferred)
+    }
+    candidates <- c("sample_id", "orig.ident", "study", "batch", "dataset")
+    for (col in candidates) {
+        if (col %in% colnames(obj@meta.data) && .count_batch_levels(obj, col) >= 2L) {
+            return(col)
+        }
+    }
+    for (col in candidates) {
+        if (col %in% colnames(obj@meta.data)) return(col)
+    }
+    stop("No batch column found in metadata (expected sample_id, orig.ident, or study).")
+}
+
+.count_integration_layers <- function(obj, assay = "SCT") {
+    if (!assay %in% Assays(obj)) return(0L)
+    if (!exists("Layers", mode = "function")) return(1L)
+    layers <- Layers(obj[[assay]])
+    data_layers <- grep("^data\\.", layers, value = TRUE)
+    if (!length(data_layers)) data_layers <- grep("^counts\\.", layers, value = TRUE)
+    length(data_layers)
+}
+
+.split_assay_layers <- function(obj, batch_col) {
+    batch <- obj@meta.data[[batch_col]]
+    for (assay_name in c("RNA", "SCT")) {
+        if (!assay_name %in% Assays(obj)) next
+        assay_obj <- obj[[assay_name]]
+        if (exists("JoinLayers", mode = "function") && inherits(assay_obj, "Assay5")) {
+            obj[[assay_name]] <- JoinLayers(assay_obj)
+        }
+        obj[[assay_name]] <- split(obj[[assay_name]], f = batch)
+    }
+    DefaultAssay(obj) <- "SCT"
+    obj
+}
+
+.prepare_integration_object <- function(obj, cfg) {
+    batch_col <- .detect_batch_column(obj, cfg$integration_batch_key %||% "sample_id")
+    n_batches <- .count_batch_levels(obj, batch_col)
+    .log_info("Integration batch column: '%s' (%d level(s)).", batch_col, n_batches)
+
+    if (n_batches < 2L) {
+        return(list(
+            object = obj, batch_col = batch_col, n_batches = n_batches, integratable = FALSE
+        ))
+    }
+
+    obj <- .split_assay_layers(obj, batch_col)
+    n_layers <- .count_integration_layers(obj, "SCT")
+    .log_info("Split SCT/RNA assays into %d integration layer(s).", n_layers)
+    if (n_layers < 2L) {
+        .log_warn(
+            "IntegrateLayers requires >= 2 SCT layers after splitting by '%s' (found %d).",
+            batch_col, n_layers
+        )
+        return(list(
+            object = obj, batch_col = batch_col, n_batches = n_batches, integratable = FALSE
+        ))
+    }
+
+    DefaultAssay(obj) <- "SCT"
+    obj <- RunPCA(obj, verbose = FALSE)
+    list(object = obj, batch_col = batch_col, n_batches = n_batches, integratable = TRUE)
+}
+
+# =============================================================================
 # Per-method integration runners
 # =============================================================================
 
@@ -419,6 +499,29 @@ tryCatch({
         stop("prepared_rds must be a Seurat object.")
     .log_info("Loaded %s cells x %s features", format(ncol(obj_base), big.mark = ","), format(nrow(obj_base), big.mark = ","))
 
+    prep <- .prepare_integration_object(obj_base, cfg)
+    obj_base <- prep$object
+
+    if (!prep$integratable) {
+        .log_warn(
+            "Harmony/RPCA/CCA require >= 2 batches in '%s' (found %d). Skipping integration run.",
+            prep$batch_col, prep$n_batches
+        )
+        .log_warn(
+            "For single-sample data use prep/nonintegrated outputs. To integrate, provide an RDS with multiple samples (sample_id levels)."
+        )
+        summary_df <- data.frame(
+            method = methods,
+            rds = NA_character_,
+            status = "skipped_single_batch",
+            stringsAsFactors = FALSE
+        )
+        summary_csv <- file.path(tab_dir, "integration_methods_summary.csv")
+        write.csv(summary_df, summary_csv, row.names = FALSE)
+        .log_info("Integration methods summary: %s", summary_csv)
+        quit(save = "no", status = 0)
+    }
+
     results <- list()
 
     for (method in methods) {
@@ -434,7 +537,15 @@ tryCatch({
         }
 
         obj_method <- tryCatch({
-            obj_work <- obj_base
+            obj_fresh <- readRDS(prepared_rds)
+            prep_method <- .prepare_integration_object(obj_fresh, cfg)
+            if (!prep_method$integratable) {
+                stop(sprintf(
+                    "Need >= 2 batches in '%s' (found %d).",
+                    prep_method$batch_col, prep_method$n_batches
+                ))
+            }
+            obj_work <- prep_method$object
             switch(method,
                 harmony = .integrate_harmony(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir),
                 rpca    = .integrate_rpca(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir),

@@ -53,6 +53,9 @@ methods: harmony,rpca,cca
 # Dims used for FindNeighbors + RunUMAP in all integration methods
 integration_dims: 1:30
 
+# Metadata column used to split layers for IntegrateLayers (needs >= 2 levels)
+integration_batch_key: sample_id
+
 # Per-method clustering resolutions (override individually as needed)
 harmony_resolution: 0.6
 rpca_resolution: 0.5
