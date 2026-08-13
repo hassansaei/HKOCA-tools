@@ -276,6 +276,9 @@ def run_integration_stage(
         if resume and not force and integration_prep_complete(int_dir):
             logger.info("Integration prep already complete for %s; skipping prep.", study)
         else:
+            extra = (
+                ["--transgenes", ",".join(cfg.transgenes)] if cfg.transgenes else None
+            )
             rc = run_prep(
                 input_rds=filtered_rds,
                 output_dir=int_dir,
@@ -283,6 +286,7 @@ def run_integration_stage(
                 config=cfg.integration_config or None,
                 force_overwrite=force,
                 dry_run=False,
+                extra_args=extra,
             )
             if rc != 0:
                 logger.error("Integration prep failed for study '%s'.", study)
@@ -299,6 +303,9 @@ def run_integration_stage(
                 len(missing),
             )
 
+        extra = (
+            ["--transgenes", ",".join(cfg.transgenes)] if cfg.transgenes else None
+        )
         rc = run_methods(
             prepared_rds=prepared_rds,
             output_dir=int_dir,
@@ -306,6 +313,7 @@ def run_integration_stage(
             config=cfg.integration_config or None,
             force_overwrite=force,
             dry_run=False,
+            extra_args=extra,
         )
         if rc != 0:
             logger.error("Integration run failed for study '%s'.", study)

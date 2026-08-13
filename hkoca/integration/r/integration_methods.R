@@ -507,6 +507,10 @@ tryCatch({
 
     .load_packages()
 
+    transgenes <- .resolve_transgenes(cfg)
+    Sys.setenv(HKOCA_TRANSGENES = paste(transgenes, collapse = ","))
+    .log_info("Transgenes for FeaturePlots: %s", paste(transgenes, collapse = ", "))
+
     colors_yaml <- .resolve_path(cfg$celltype_colors_yaml)
     if (is.na(colors_yaml) || !nzchar(colors_yaml)) {
         colors_yaml <- Sys.getenv("HKOCA_CELLTYPE_COLORS", unset = "")

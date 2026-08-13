@@ -17,6 +17,7 @@ logger = logging.getLogger("hkoca.integration")
 DEFAULT_INTEGRATION_ENV = "hkoca_integration"
 DEFAULT_ANNOTATION_ENV = "hkoca_harmonize"
 DEFAULT_METHODS = ("harmony", "rpca", "cca")
+DEFAULT_TRANSGENES = ("AAV", "EGFP", "mCherry", "GFP", "eGFP")
 
 
 def r_script_path(stage: str = "prep") -> Path:
@@ -87,6 +88,9 @@ def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
     prefix = Path(rscript).resolve().parent.parent
     env = subprocess_env_for_prefix(prefix)
     env["HKOCA_CELLTYPE_COLORS"] = str(celltype_colors_path())
+    env["HKOCA_TRANSGENES"] = os.environ.get("HKOCA_TRANSGENES", "").strip() or ",".join(
+        DEFAULT_TRANSGENES
+    )
 
     ann_py = resolve_annotation_python()
     if ann_py:

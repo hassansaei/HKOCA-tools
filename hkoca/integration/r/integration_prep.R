@@ -503,6 +503,9 @@ tryCatch({
 
     .load_integration_packages()
     hkoca_palettes <- .load_hkoca_color_palettes(script_dir, cfg)
+    transgenes <- .resolve_transgenes(cfg)
+    Sys.setenv(HKOCA_TRANSGENES = paste(transgenes, collapse = ","))
+    .log_info("Transgenes for FeaturePlots: %s", paste(transgenes, collapse = ", "))
 
     .log_info("Loading Seurat object: %s", input_rds)
     obj <- readRDS(input_rds)

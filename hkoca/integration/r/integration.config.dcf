@@ -51,6 +51,9 @@ celltype_colors_yaml: null
 # Marker YAML for FeaturePlots and re-annotation (default: packaged snapseed_markers_v4.yaml)
 markers_yaml: null
 
+# Reporter / transgene genes to FeaturePlot when present in the object
+transgenes: AAV,EGFP,mCherry,GFP,eGFP
+
 # Integration methods to run (comma-separated; default: harmony,rpca,cca)
 methods: harmony,rpca,cca
 

@@ -231,9 +231,9 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     obj
 }
 
-.hkoca_feature_plot <- function(obj, features, reduction, ncol) {
-    fp <- FeaturePlot(
-        obj,
+.hkoca_feature_plot <- function(obj, features, reduction, ncol, split.by = NULL) {
+    args <- list(
+        object = obj,
         features = features,
         reduction = reduction,
         ncol = ncol,
@@ -242,8 +242,132 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
         order = TRUE,
         cols = HKOCA_FEATURE_COLS,
         raster = FALSE
-    ) & theme(plot.title = element_text(size = 9))
+    )
+    if (!is.null(split.by) && nzchar(split.by)) args$split.by <- split.by
+    fp <- do.call(FeaturePlot, args) & theme(plot.title = element_text(size = 9))
     .apply_point_style(fp, size = HKOCA_FEATURE_PT_SIZE, alpha = HKOCA_UMAP_ALPHA)
+}
+
+.parse_name_list <- function(x) {
+    parts <- trimws(unlist(strsplit(as.character(x %||% ""), ",", fixed = TRUE)))
+    parts[nzchar(parts) & !tolower(parts) %in% c("null", "none", "na")]
+}
+
+.resolve_transgenes <- function(cfg = NULL) {
+    from_cfg <- .parse_name_list(if (!is.null(cfg)) cfg$transgenes else NULL)
+    if (length(from_cfg)) return(unique(from_cfg))
+    from_env <- .parse_name_list(Sys.getenv("HKOCA_TRANSGENES", unset = ""))
+    if (length(from_env)) return(unique(from_env))
+    c("AAV", "EGFP", "mCherry", "GFP", "eGFP")
+}
+
+.match_features_in_object <- function(obj, names) {
+    wanted <- unique(.parse_name_list(names))
+    if (!length(wanted)) return(character(0))
+    feats <- rownames(obj)
+    key <- stats::setNames(feats, toupper(feats))
+    found <- vapply(wanted, function(g) {
+        hit <- unname(key[toupper(g)])
+        hit <- hit[!is.na(hit) & nzchar(hit)]
+        if (length(hit)) hit[[1]] else NA_character_
+    }, character(1))
+    unique(found[!is.na(found)])
+}
+
+.assay_matrix <- function(obj, assay = DefaultAssay(obj)) {
+    for (layer in c("data", "counts")) {
+        mat <- tryCatch(
+            GetAssayData(obj, assay = assay, layer = layer),
+            error = function(e) tryCatch(
+                GetAssayData(obj, assay = assay, slot = layer),
+                error = function(e2) NULL
+            )
+        )
+        if (!is.null(mat) && nrow(mat) > 0) return(mat)
+    }
+    NULL
+}
+
+.features_with_expression <- function(obj, features) {
+    features <- unique(features[features %in% rownames(obj)])
+    if (!length(features)) return(character(0))
+    mat <- .assay_matrix(obj)
+    if (is.null(mat)) return(features)
+    keep <- vapply(features, function(g) {
+        if (!g %in% rownames(mat)) return(FALSE)
+        as.numeric(Matrix::nnzero(mat[g, , drop = FALSE])) > 0
+    }, logical(1))
+    features[keep]
+}
+
+.save_one_feature_plot <- function(obj, features, reduction, out_dir, label, method_label) {
+    if (!length(features)) return(NULL)
+    safe_label <- gsub("[^A-Za-z0-9_-]", "_", label)
+    out_path <- file.path(out_dir, sprintf("featureplot_%s.png", safe_label))
+    layout <- .feature_plot_layout(length(features))
+    fp <- tryCatch(
+        .hkoca_feature_plot(obj, features, reduction, layout$ncol),
+        error = function(e) {
+            .log_warn(
+                "[%s] FeaturePlot failed for %s: %s",
+                method_label, label, conditionMessage(e)
+            )
+            NULL
+        }
+    )
+    if (is.null(fp)) return(NULL)
+    fp_titled <- fp + patchwork::plot_annotation(title = label)
+    .save_ggplot_png(out_path, fp_titled, width = layout$width, height = layout$height)
+    .log_info(
+        "[%s] Saved FeaturePlot: %s (genes=%d, ncol=%d)",
+        method_label, out_path, length(features), layout$ncol
+    )
+    list(path = out_path, genes = features, ncol = layout$ncol)
+}
+
+.save_split_feature_plots <- function(obj, features, reduction, out_dir, split_cols,
+                                        label, method_label) {
+    if (!length(features) || !length(split_cols)) return(list())
+    saved <- list()
+    for (col_name in split_cols) {
+        levels_n <- length(.categorical_levels(obj@meta.data[[col_name]]))
+        if (levels_n < 2L) next
+        layout <- .split_plot_layout(levels_n)
+        panels <- lapply(features, function(g) {
+            tryCatch(
+                .hkoca_feature_plot(obj, g, reduction, layout$num_columns, split.by = col_name),
+                error = function(e) {
+                    .log_warn(
+                        "[%s] Split FeaturePlot failed for %s / %s: %s",
+                        method_label, g, col_name, conditionMessage(e)
+                    )
+                    NULL
+                }
+            )
+        })
+        panels <- Filter(Negate(is.null), panels)
+        if (!length(panels)) next
+        combined <- if (length(panels) == 1L) {
+            panels[[1]]
+        } else {
+            patchwork::wrap_plots(panels, ncol = 1L)
+        }
+        combined <- combined + patchwork::plot_annotation(
+            title = sprintf("%s %s split by %s", method_label, label, col_name)
+        )
+        safe_label <- gsub("[^A-Za-z0-9_-]", "_", label)
+        out_path <- file.path(out_dir, sprintf("featureplot_%s_split_%s.png", safe_label, col_name))
+        height <- layout$height * max(1, length(panels))
+        .save_ggplot_png(out_path, combined, width = layout$width, height = height)
+        .log_info(
+            "[%s] Saved split FeaturePlot: %s (column=%s, genes=%d, levels=%d)",
+            method_label, out_path, col_name, length(panels), levels_n
+        )
+        saved[[col_name]] <- list(
+            path = out_path, genes = features, n_levels = levels_n
+        )
+    }
+    saved
 }
 
 .extract_level3_marker_groups <- function(yaml_path) {
@@ -378,8 +502,11 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     )
 
     marker_groups <- .extract_level3_marker_groups(markers_yaml_path)
+    transgene_names <- .resolve_transgenes()
     feature_outputs <- list()
-    if (length(marker_groups) > 0 && feature_assay %in% Assays(obj)) {
+    need_features <- feature_assay %in% Assays(obj) &&
+        (length(marker_groups) > 0 || length(transgene_names) > 0)
+    if (need_features) {
         if (identical(feature_assay, "RNA")) {
             obj <- .ensure_joined_normalized_rna(obj)
         }
@@ -390,28 +517,28 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
                 .log_info("[%s] FeaturePlot: skipping %s (no genes found in object)", method_label, grp$label)
                 next
             }
-            safe_label <- gsub("[^A-Za-z0-9_-]", "_", grp$label)
-            out_path <- file.path(out_dir, sprintf("featureplot_%s.png", safe_label))
-            layout <- .feature_plot_layout(length(present))
-            fp <- tryCatch(
-                .hkoca_feature_plot(obj, present, reduction, layout$ncol),
-                error = function(e) {
-                    .log_warn(
-                        "[%s] FeaturePlot failed for %s: %s",
-                        method_label, grp$label, conditionMessage(e)
-                    )
-                    NULL
-                }
+            saved <- .save_one_feature_plot(
+                obj, present, reduction, out_dir, grp$label, method_label
             )
-            if (is.null(fp)) next
-            fp_titled <- fp + patchwork::plot_annotation(title = grp$label)
-            .save_ggplot_png(out_path, fp_titled, width = layout$width, height = layout$height)
+            if (!is.null(saved)) feature_outputs[[grp$label]] <- saved
+        }
+        transgene_feats <- .features_with_expression(
+            obj, .match_features_in_object(obj, transgene_names)
+        )
+        if (length(transgene_feats)) {
+            saved <- .save_one_feature_plot(
+                obj, transgene_feats, reduction, out_dir, "transgenes", method_label
+            )
+            if (!is.null(saved)) feature_outputs[["transgenes"]] <- saved
+            split_fp <- .save_split_feature_plots(
+                obj, transgene_feats, reduction, out_dir, split_cols,
+                "transgenes", method_label
+            )
+            if (length(split_fp)) feature_outputs[["transgenes_split"]] <- split_fp
+        } else if (length(transgene_names)) {
             .log_info(
-                "[%s] Saved FeaturePlot: %s (genes=%d, ncol=%d)",
-                method_label, out_path, length(present), layout$ncol
-            )
-            feature_outputs[[grp$label]] <- list(
-                path = out_path, genes = present, ncol = layout$ncol
+                "[%s] FeaturePlot: no transgene expression in object (looked for: %s)",
+                method_label, paste(transgene_names, collapse = ", ")
             )
         }
         if (identical(feature_assay, "RNA")) {
