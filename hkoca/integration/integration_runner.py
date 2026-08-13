@@ -215,39 +215,31 @@ def run_methods(
         logger.error("Prepared RDS does not exist: %s", prepared_rds)
         return 1
 
-    skip_r = (not force_overwrite) and (not dry_run) and all_method_rds_exist(output_dir, methods_list)
-    if skip_r:
-        logger.info(
-            "Skipping integration methods; existing RDS for: %s",
-            ", ".join(methods_list),
+    try:
+        cmd = build_run_command(
+            prepared_rds=prepared_rds,
+            output_dir=output_dir,
+            methods=",".join(methods_list),
+            config=config,
+            force_overwrite=force_overwrite,
+            remove_intermediate=remove_intermediate,
+            extra_args=extra_args,
         )
-        rc = 0
-    else:
-        try:
-            cmd = build_run_command(
-                prepared_rds=prepared_rds,
-                output_dir=output_dir,
-                methods=",".join(methods_list),
-                config=config,
-                force_overwrite=force_overwrite,
-                remove_intermediate=remove_intermediate,
-                extra_args=extra_args,
-            )
-        except FileNotFoundError as exc:
-            logger.error("%s", exc)
-            return 1
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        return 1
 
-        logger.info("Integration methods command: %s", " ".join(cmd))
-        if dry_run:
-            return 0
+    logger.info("Integration methods command: %s", " ".join(cmd))
+    if dry_run:
+        return 0
 
-        os.makedirs(output_dir, exist_ok=True)
-        result = subprocess.run(cmd, check=False, env=_subprocess_env_for_rscript(cmd[0]))
-        rc = result.returncode
-        if rc != 0:
-            logger.error("Integration methods failed (exit %s).", rc)
-            return rc
-        logger.info("Integration methods completed successfully. Outputs under: %s", output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    result = subprocess.run(cmd, check=False, env=_subprocess_env_for_rscript(cmd[0]))
+    rc = result.returncode
+    if rc != 0:
+        logger.error("Integration methods failed (exit %s).", rc)
+        return rc
+    logger.info("Integration methods completed successfully. Outputs under: %s", output_dir)
 
     if dry_run:
         return 0

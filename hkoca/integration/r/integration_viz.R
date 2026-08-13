@@ -1,9 +1,9 @@
 # Shared integration figure helpers (UMAP, FeaturePlot, silhouette selection).
 
 HKOCA_PLOT_DPI <- 300L
-HKOCA_UMAP_PT_SIZE <- 1.2
+HKOCA_UMAP_PT_SIZE <- 2.5
 HKOCA_UMAP_ALPHA <- 1.0
-HKOCA_FEATURE_PT_SIZE <- 0.8
+HKOCA_FEATURE_PT_SIZE <- 1.2
 HKOCA_FEATURE_COLS <- c("grey80", "black")
 
 .categorical_levels <- function(x) {
@@ -20,7 +20,8 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     if (grepl("^integrated\\.", col_name)) return(TRUE)
     if (grepl("^leiden_res", col_name, ignore.case = TRUE)) return(TRUE)
     if (grepl("^Level_", col_name)) return(TRUE)
-    if (col_name %in% c("celltype_final", "celltype")) return(TRUE)
+    if (grepl("_clusters$", col_name)) return(TRUE)
+    if (col_name %in% c("celltype_final", "celltype", "seurat_clusters", "ident")) return(TRUE)
     FALSE
 }
 
@@ -61,6 +62,58 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
 .save_ggplot_png <- function(path, plot, width, height, dpi = HKOCA_PLOT_DPI) {
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     ggsave(path, plot = plot, width = width, height = height, dpi = dpi, bg = "white")
+}
+
+.resolution_label <- function(resolution) {
+    if (is.null(resolution) || length(resolution) == 0 || is.na(resolution[1])) {
+        return(NA_character_)
+    }
+    format(as.numeric(resolution[1]), trim = TRUE, scientific = FALSE)
+}
+
+.apply_point_style <- function(plot, size = HKOCA_UMAP_PT_SIZE, alpha = HKOCA_UMAP_ALPHA) {
+    style_ggplot <- function(p) {
+        if (!inherits(p, "ggplot")) return(p)
+        for (i in seq_along(p$layers)) {
+            geom_class <- class(p$layers[[i]]$geom)
+            if (!any(grepl("Point|Scattermore", geom_class))) next
+            if (any(grepl("Scattermore", geom_class))) {
+                p$layers[[i]]$aes_params$pointsize <- max(size * 3, 6)
+                p$layers[[i]]$aes_params$pixels <- 1200
+            } else {
+                p$layers[[i]]$aes_params$size <- size
+            }
+            p$layers[[i]]$aes_params$alpha <- alpha
+            p$layers[[i]]$aes_params$stroke <- 0
+        }
+        p
+    }
+    if (inherits(plot, "patchwork")) {
+        n <- tryCatch(length(plot), error = function(e) 0L)
+        if (is.finite(n) && n > 0L) {
+            for (i in seq_len(n)) {
+                if (inherits(plot[[i]], "ggplot")) plot[[i]] <- style_ggplot(plot[[i]])
+            }
+        }
+        return(plot)
+    }
+    style_ggplot(plot)
+}
+
+.hkoca_dim_plot <- function(obj, reduction, ..., group.by = NULL) {
+    extra <- list(...)
+    args <- c(
+        list(
+            object = obj,
+            reduction = reduction,
+            pt.size = HKOCA_UMAP_PT_SIZE,
+            raster = FALSE
+        ),
+        extra
+    )
+    if (!is.null(group.by)) args$group.by <- group.by
+    plot <- do.call(DimPlot, args)
+    .apply_point_style(plot, size = HKOCA_UMAP_PT_SIZE, alpha = HKOCA_UMAP_ALPHA)
 }
 
 .annotation_level_columns <- function(meta) {
@@ -145,19 +198,6 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     saved
 }
 
-.hkoca_dim_plot <- function(obj, reduction, ..., group.by = NULL) {
-    args <- list(
-        object = obj,
-        reduction = reduction,
-        pt.size = HKOCA_UMAP_PT_SIZE,
-        alpha = HKOCA_UMAP_ALPHA,
-        raster = FALSE,
-        ...
-    )
-    if (!is.null(group.by)) args$group.by <- group.by
-    do.call(DimPlot, args)
-}
-
 .ensure_joined_normalized_rna <- function(obj) {
     if (!"RNA" %in% Assays(obj)) return(obj)
     assay_obj <- obj[["RNA"]]
@@ -192,7 +232,7 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
 }
 
 .hkoca_feature_plot <- function(obj, features, reduction, ncol) {
-    FeaturePlot(
+    fp <- FeaturePlot(
         obj,
         features = features,
         reduction = reduction,
@@ -203,6 +243,7 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
         cols = HKOCA_FEATURE_COLS,
         raster = FALSE
     ) & theme(plot.title = element_text(size = 9))
+    .apply_point_style(fp, size = HKOCA_FEATURE_PT_SIZE, alpha = HKOCA_UMAP_ALPHA)
 }
 
 .extract_level3_marker_groups <- function(yaml_path) {
@@ -237,19 +278,73 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     groups
 }
 
+.save_level_annotation_umaps <- function(obj, out_dir, reduction, palettes, method_label) {
+    level_cols <- .annotation_level_columns(obj@meta.data)
+    if (!length(level_cols)) {
+        .log_warn(
+            "[%s] No Level_1/2/3 columns; skipping annotation UMAPs (pass --annotated-h5ad at prep).",
+            method_label
+        )
+        return(character(0))
+    }
+    saved <- character(0)
+    fb <- if (!is.null(palettes)) palettes$fallback %||% "#BBBBBB" else "#BBBBBB"
+    for (col_name in level_cols) {
+        colors <- tryCatch(
+            ditto_colors_for_meta(obj, col_name, palettes = palettes),
+            error = function(e) {
+                .log_warn("[%s] Color lookup failed for %s: %s", method_label, col_name, conditionMessage(e))
+                NULL
+            }
+        )
+        plot_args <- list(
+            obj = obj,
+            reduction = reduction,
+            group.by = col_name,
+            label = TRUE,
+            repel = TRUE
+        )
+        # Named vector from celltype_colors.yaml; DimPlot matches identity names.
+        if (!is.null(colors) && length(colors)) {
+            colors[is.na(colors) | !nzchar(colors)] <- fb
+            plot_args$cols <- colors
+        }
+        p <- do.call(.hkoca_dim_plot, plot_args) +
+            ggtitle(sprintf("%s UMAP (%s)", method_label, gsub("_", " ", col_name, fixed = TRUE)))
+        out_path <- file.path(out_dir, sprintf("umap_%s.png", col_name))
+        .save_ggplot_png(out_path, p, width = 10, height = 7)
+        .log_info(
+            "[%s] Saved annotation UMAP: %s (palette=%s, labels=%d)",
+            method_label, out_path, infer_palette_level(col_name), length(colors)
+        )
+        saved <- c(saved, out_path)
+    }
+    saved
+}
+
 .save_integration_figures <- function(obj, out_dir, reduction, cluster_col,
                                         markers_yaml_path, method_label,
-                                        feature_assay = "RNA") {
+                                        feature_assay = "RNA", palettes = NULL,
+                                        resolution = NA_real_) {
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
+    res_lab <- .resolution_label(resolution)
     Idents(obj) <- cluster_col
-    overall_path <- file.path(out_dir, "umap.png")
-    overall_plot <- .hkoca_dim_plot(
-        obj,
-        reduction = reduction,
-        label = TRUE,
-        repel = TRUE
-    ) + ggtitle(sprintf("%s UMAP", method_label))
+    if (!is.na(res_lab)) {
+        overall_path <- file.path(out_dir, sprintf("umap_res%s.png", res_lab))
+        overall_title <- sprintf("%s UMAP (resolution %s)", method_label, res_lab)
+    } else {
+        overall_path <- file.path(out_dir, "umap.png")
+        overall_title <- sprintf("%s UMAP", method_label)
+    }
+    overall_plot <- .apply_point_style(
+        .hkoca_dim_plot(
+            obj,
+            reduction = reduction,
+            label = TRUE,
+            repel = TRUE
+        ) + ggtitle(overall_title)
+    )
     .save_ggplot_png(overall_path, overall_plot, width = 8, height = 6)
     .log_info("[%s] Saved UMAP: %s", method_label, overall_path)
 
@@ -276,6 +371,11 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
             width = layout$width, height = layout$height
         )
     }
+
+    level_umaps <- .save_level_annotation_umaps(obj, out_dir, reduction, palettes, method_label)
+    prop_paths <- .save_celltype_proportion_plots(
+        obj, out_dir, group.by = "sample_id", palettes = palettes, method_label = method_label
+    )
 
     marker_groups <- .extract_level3_marker_groups(markers_yaml_path)
     feature_outputs <- list()
@@ -341,7 +441,9 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
         overall = overall_path,
         split = split_outputs,
         feature_plots = feature_outputs,
-        split_columns = split_cols
+        split_columns = split_cols,
+        level_umaps = level_umaps,
+        proportion_plots = prop_paths
     )
 }
 

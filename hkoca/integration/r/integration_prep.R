@@ -354,7 +354,8 @@
 }
 
 .run_nonintegrated_umap_and_plots <- function(obj, out_dir, dims, cluster_col,
-                                              markers_yaml_path, palettes = NULL) {
+                                              markers_yaml_path, palettes = NULL,
+                                              resolution = NA_real_) {
     .log_info("Running non-integrated UMAP from PCA.")
     obj <- RunUMAP(
         obj,
@@ -370,15 +371,10 @@
         cluster_col = cluster_col,
         markers_yaml_path = markers_yaml_path,
         method_label = "Non-integrated",
-        feature_assay = "RNA"
-    )
-    prop_paths <- .save_celltype_proportion_plots(
-        obj, out_dir,
-        group.by = "sample_id",
+        feature_assay = "RNA",
         palettes = palettes,
-        method_label = "Non-integrated"
+        resolution = resolution
     )
-    vis$proportion_plots <- prop_paths
     list(object = obj, outputs = vis)
 }
 
@@ -615,7 +611,8 @@ tryCatch({
     }
     nonint_result <- .run_nonintegrated_umap_and_plots(
         obj, nonint_dir, neighbor_dims, cluster_col, markers_yaml,
-        palettes = hkoca_palettes
+        palettes = hkoca_palettes,
+        resolution = best_res
     )
     obj <- nonint_result$object
     nonintegrated_outputs <- nonint_result$outputs

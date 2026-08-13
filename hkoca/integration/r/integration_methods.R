@@ -112,6 +112,8 @@
         library(reticulate)
     })
     script_dir <- .get_script_dir()
+    colors_r <- file.path(script_dir, "hkoca_colors.R")
+    if (file.exists(colors_r)) source(colors_r, local = FALSE)
     viz_r <- file.path(script_dir, "integration_viz.R")
     if (!file.exists(viz_r))
         stop(sprintf("Missing integration visualization helpers: %s", viz_r))
@@ -376,7 +378,7 @@
 # Per-method integration runners
 # =============================================================================
 
-.integrate_harmony <- function(obj, cfg, method_dir, markers_yaml, ann_dir) {
+.integrate_harmony <- function(obj, cfg, method_dir, markers_yaml, ann_dir, palettes = NULL) {
     dims <- .parse_dims(cfg$integration_dims %||% "1:30")
     res  <- as.numeric(cfg$harmony_resolution %||% "0.6")
 
@@ -394,11 +396,12 @@
     obj <- .run_snapseed_reannotation(obj, "harmony_clusters",
                                       markers_yaml, ann_dir, "harmony")
     .save_integration_figures(obj, method_dir, "umap.harmony", "harmony_clusters",
-                         markers_yaml, "Harmony", feature_assay = "RNA")
+                         markers_yaml, "Harmony", feature_assay = "RNA",
+                         palettes = palettes, resolution = res)
     obj
 }
 
-.integrate_rpca <- function(obj, cfg, method_dir, markers_yaml, ann_dir) {
+.integrate_rpca <- function(obj, cfg, method_dir, markers_yaml, ann_dir, palettes = NULL) {
     dims <- .parse_dims(cfg$integration_dims %||% "1:30")
     res  <- as.numeric(cfg$rpca_resolution %||% "0.5")
 
@@ -416,11 +419,12 @@
     obj <- .run_snapseed_reannotation(obj, "rpca_clusters",
                                       markers_yaml, ann_dir, "rpca")
     .save_integration_figures(obj, method_dir, "umap.rpca", "rpca_clusters",
-                         markers_yaml, "RPCA", feature_assay = "RNA")
+                         markers_yaml, "RPCA", feature_assay = "RNA",
+                         palettes = palettes, resolution = res)
     obj
 }
 
-.integrate_cca <- function(obj, cfg, method_dir, markers_yaml, ann_dir) {
+.integrate_cca <- function(obj, cfg, method_dir, markers_yaml, ann_dir, palettes = NULL) {
     dims <- .parse_dims(cfg$integration_dims %||% "1:30")
     res  <- as.numeric(cfg$cca_resolution %||% "0.5")
 
@@ -438,7 +442,8 @@
     obj <- .run_snapseed_reannotation(obj, "cca_clusters",
                                       markers_yaml, ann_dir, "cca")
     .save_integration_figures(obj, method_dir, "umap.cca", "cca_clusters",
-                         markers_yaml, "CCA", feature_assay = "RNA")
+                         markers_yaml, "CCA", feature_assay = "RNA",
+                         palettes = palettes, resolution = res)
     obj
 }
 
@@ -502,6 +507,79 @@ tryCatch({
 
     .load_packages()
 
+    colors_yaml <- .resolve_path(cfg$celltype_colors_yaml)
+    if (is.na(colors_yaml) || !nzchar(colors_yaml)) {
+        colors_yaml <- Sys.getenv("HKOCA_CELLTYPE_COLORS", unset = "")
+    }
+    if (!nzchar(colors_yaml %||% "")) {
+        colors_yaml <- normalizePath(
+            file.path(script_dir, "..", "..", "config", "celltype_colors.yaml"),
+            mustWork = FALSE
+        )
+    }
+    palettes <- tryCatch(load_hkoca_celltype_palettes(colors_yaml), error = function(e) {
+        .log_warn("Could not load HKOCA cell-type colors: %s", conditionMessage(e))
+        NULL
+    })
+    if (!is.null(palettes)) .log_info("Loaded HKOCA cell-type colors: %s", palettes$path)
+
+    all_rds_exist <- all(vapply(methods, function(m) {
+        p <- file.path(obj_dir, sprintf("integrated_%s.rds", m))
+        file.exists(p) && isTRUE(file.info(p)$size > 0)
+    }, logical(1)))
+
+    if (!force_flag && all_rds_exist) {
+        .log_info("All method RDS exist; skipping IntegrateLayers and refreshing figures.")
+        results <- list()
+        for (method in methods) {
+            method_fig_dir <- file.path(output_dir, method)
+            out_rds <- file.path(obj_dir, sprintf("integrated_%s.rds", method))
+            .log_info("[%s] Refreshing figures from %s", method, out_rds)
+            obj_existing <- tryCatch(readRDS(out_rds), error = function(e) NULL)
+            if (!is.null(obj_existing)) {
+                tryCatch(
+                    switch(method,
+                        harmony = .save_integration_figures(
+                            obj_existing, method_fig_dir, "umap.harmony", "harmony_clusters",
+                            markers_yaml, "Harmony", feature_assay = "RNA",
+                            palettes = palettes,
+                            resolution = as.numeric(cfg$harmony_resolution %||% "0.6")
+                        ),
+                        rpca = .save_integration_figures(
+                            obj_existing, method_fig_dir, "umap.rpca", "rpca_clusters",
+                            markers_yaml, "RPCA", feature_assay = "RNA",
+                            palettes = palettes,
+                            resolution = as.numeric(cfg$rpca_resolution %||% "0.5")
+                        ),
+                        cca = .save_integration_figures(
+                            obj_existing, method_fig_dir, "umap.cca", "cca_clusters",
+                            markers_yaml, "CCA", feature_assay = "RNA",
+                            palettes = palettes,
+                            resolution = as.numeric(cfg$cca_resolution %||% "0.5")
+                        ),
+                        NULL
+                    ),
+                    error = function(e) {
+                        .log_warn("[%s] Figure refresh failed: %s", method, conditionMessage(e))
+                    }
+                )
+                rm(obj_existing); gc(verbose = FALSE)
+            }
+            results[[method]] <- list(rds = out_rds, status = "skipped")
+        }
+        summary_df <- data.frame(
+            method = names(results),
+            rds    = vapply(results, `[[`, character(1), "rds"),
+            status = vapply(results, `[[`, character(1), "status"),
+            stringsAsFactors = FALSE
+        )
+        summary_csv <- file.path(tab_dir, "integration_methods_summary.csv")
+        write.csv(summary_df, summary_csv, row.names = FALSE)
+        .log_info("Integration methods summary: %s", summary_csv)
+        .log_info("Figure refresh complete. Outputs under: %s", output_dir)
+        quit(save = "no", status = 0)
+    }
+
     .log_info("Loading prepared Seurat object: %s", prepared_rds)
     obj_check <- readRDS(prepared_rds)
     if (!inherits(obj_check, "Seurat"))
@@ -553,7 +631,34 @@ tryCatch({
         out_rds <- file.path(obj_dir, sprintf("integrated_%s.rds", method))
 
         if (!force_flag && file.exists(out_rds) && file.info(out_rds)$size > 0) {
-            .log_info("[%s] Skipping, output already exists: %s", method, out_rds)
+            .log_info("[%s] Integration RDS exists; refreshing figures: %s", method, out_rds)
+            obj_existing <- tryCatch(readRDS(out_rds), error = function(e) NULL)
+            if (!is.null(obj_existing)) {
+                tryCatch(
+                    switch(method,
+                        harmony = .save_integration_figures(
+                            obj_existing, method_fig_dir, "umap.harmony", "harmony_clusters",
+                            markers_yaml, "Harmony", feature_assay = "RNA",
+                            palettes = palettes, resolution = as.numeric(cfg$harmony_resolution %||% "0.6")
+                        ),
+                        rpca = .save_integration_figures(
+                            obj_existing, method_fig_dir, "umap.rpca", "rpca_clusters",
+                            markers_yaml, "RPCA", feature_assay = "RNA",
+                            palettes = palettes, resolution = as.numeric(cfg$rpca_resolution %||% "0.5")
+                        ),
+                        cca = .save_integration_figures(
+                            obj_existing, method_fig_dir, "umap.cca", "cca_clusters",
+                            markers_yaml, "CCA", feature_assay = "RNA",
+                            palettes = palettes, resolution = as.numeric(cfg$cca_resolution %||% "0.5")
+                        ),
+                        NULL
+                    ),
+                    error = function(e) {
+                        .log_warn("[%s] Figure refresh failed: %s", method, conditionMessage(e))
+                    }
+                )
+                rm(obj_existing); gc(verbose = FALSE)
+            }
             results[[method]] <- list(rds = out_rds, status = "skipped")
             next
         }
@@ -562,9 +667,9 @@ tryCatch({
             obj_work <- readRDS(prepared_rds)
             DefaultAssay(obj_work) <- "SCT"
             switch(method,
-                harmony = .integrate_harmony(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir),
-                rpca    = .integrate_rpca(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir),
-                cca     = .integrate_cca(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir),
+                harmony = .integrate_harmony(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir, palettes),
+                rpca    = .integrate_rpca(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir, palettes),
+                cca     = .integrate_cca(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir, palettes),
                 {
                     .log_warn("Unknown method '%s', skipping.", method)
                     NULL
