@@ -331,13 +331,24 @@
     stop("No batch column found in metadata (expected sample_id, orig.ident, or study).")
 }
 
-.count_integration_layers <- function(obj, assay = "SCT") {
+.count_assay5_batch_layers <- function(obj, assay = "RNA") {
     if (!assay %in% Assays(obj)) return(0L)
     if (!exists("Layers", mode = "function")) return(1L)
-    layers <- Layers(obj[[assay]])
+    layers <- tryCatch(Layers(obj[[assay]]), error = function(e) character(0))
+    if (!length(layers)) return(0L)
     data_layers <- grep("^data\\.", layers, value = TRUE)
     if (!length(data_layers)) data_layers <- grep("^counts\\.", layers, value = TRUE)
     length(data_layers)
+}
+
+.count_sct_models <- function(obj) {
+    if (!"SCT" %in% Assays(obj)) return(0L)
+    assay_obj <- obj[["SCT"]]
+    if (inherits(assay_obj, "SCTAssay") && "SCTModel.list" %in% slotNames(assay_obj)) {
+        return(length(slot(assay_obj, "SCTModel.list")))
+    }
+    # Fallback: Assay5-style SCT layers (unusual, but handle if present)
+    .count_assay5_batch_layers(obj, "SCT")
 }
 
 .prepare_integration_object <- function(obj, cfg) {
@@ -347,7 +358,11 @@
 
     if (n_batches < 2L) {
         return(list(
-            object = obj, batch_col = batch_col, n_batches = n_batches, integratable = FALSE
+            object = obj,
+            batch_col = batch_col,
+            n_batches = n_batches,
+            integratable = FALSE,
+            skip_reason = "single_batch"
         ))
     }
 
@@ -364,19 +379,25 @@
     batch <- obj@meta.data[[batch_col]]
     .log_info("Splitting RNA assay by '%s'.", batch_col)
     obj[["RNA"]] <- split(obj[["RNA"]], f = batch)
-    n_rna_layers <- .count_integration_layers(obj, "RNA")
+    n_rna_layers <- .count_assay5_batch_layers(obj, "RNA")
     .log_info("Split RNA assay into %d layer(s).", n_rna_layers)
     if (n_rna_layers < 2L) {
-        .log_warn(
-            "IntegrateLayers requires >= 2 RNA layers after splitting by '%s' (found %d).",
-            batch_col, n_rna_layers
-        )
         return(list(
-            object = obj, batch_col = batch_col, n_batches = n_batches, integratable = FALSE
+            object = obj,
+            batch_col = batch_col,
+            n_batches = n_batches,
+            integratable = FALSE,
+            skip_reason = sprintf("rna_layers_%d", n_rna_layers)
         ))
     }
 
-    .log_info("Re-running SCTransform on split RNA layers (regress %s).", mito_col)
+    # Drop prep SCT so SCTransform rebuilds models from split RNA layers
+    if ("SCT" %in% Assays(obj)) {
+        .log_info("Removing existing SCT assay before split-layer SCTransform.")
+        obj[["SCT"]] <- NULL
+    }
+
+    .log_info("Running SCTransform on split RNA layers (regress %s).", mito_col)
     DefaultAssay(obj) <- "RNA"
     obj <- SCTransform(
         obj,
@@ -388,11 +409,26 @@
     )
     DefaultAssay(obj) <- "SCT"
 
+    n_sct_models <- .count_sct_models(obj)
+    .log_info(
+        "SCT assay class=%s with %d model(s).",
+        paste(class(obj[["SCT"]]), collapse = "/"), n_sct_models
+    )
+    if (n_sct_models < 2L) {
+        return(list(
+            object = obj,
+            batch_col = batch_col,
+            n_batches = n_batches,
+            integratable = FALSE,
+            skip_reason = sprintf("sct_models_%d", n_sct_models)
+        ))
+    }
+
     obj <- FindVariableFeatures(
         obj, selection.method = "vst", assay = "SCT", nfeatures = n_features, verbose = FALSE
     )
 
-    .log_info("Running PCA on split SCT (npcs=%d).", npcs)
+    .log_info("Running PCA on SCT residuals (npcs=%d).", npcs)
     obj <- RunPCA(obj, npcs = npcs, verbose = FALSE)
 
     n_cells_after <- ncol(obj)
@@ -404,19 +440,13 @@
         .log_warn("Cell count changed after split SCT+PCA (%d -> %d).", n_cells_before, n_cells_after)
     }
 
-    n_sct_layers <- .count_integration_layers(obj, "SCT")
-    .log_info("SCT assay has %d integration layer(s).", n_sct_layers)
-    if (n_sct_layers < 2L) {
-        .log_warn(
-            "IntegrateLayers requires >= 2 SCT layers after SCTransform (found %d).",
-            n_sct_layers
-        )
-        return(list(
-            object = obj, batch_col = batch_col, n_batches = n_batches, integratable = FALSE
-        ))
-    }
-
-    list(object = obj, batch_col = batch_col, n_batches = n_batches, integratable = TRUE)
+    list(
+        object = obj,
+        batch_col = batch_col,
+        n_batches = n_batches,
+        integratable = TRUE,
+        skip_reason = NA_character_
+    )
 }
 
 # =============================================================================
@@ -431,7 +461,7 @@
     obj <- IntegrateLayers(
         object = obj, method = HarmonyIntegration,
         orig.reduction = "pca", new.reduction = "harmony",
-        normalization.method = "SCT", verbose = TRUE
+        assay = "SCT", normalization.method = "SCT", verbose = TRUE
     )
     obj <- FindNeighbors(obj, reduction = "harmony", dims = dims, verbose = FALSE)
     obj <- FindClusters(obj, resolution = res, cluster.name = "harmony_clusters", verbose = FALSE)
@@ -453,7 +483,7 @@
     obj <- IntegrateLayers(
         object = obj, method = RPCAIntegration,
         orig.reduction = "pca", new.reduction = "integrated.rpca",
-        normalization.method = "SCT", verbose = TRUE
+        assay = "SCT", normalization.method = "SCT", verbose = TRUE
     )
     obj <- FindNeighbors(obj, reduction = "integrated.rpca", dims = dims, verbose = FALSE)
     obj <- FindClusters(obj, resolution = res, cluster.name = "rpca_clusters", verbose = FALSE)
@@ -475,7 +505,7 @@
     obj <- IntegrateLayers(
         object = obj, method = CCAIntegration,
         orig.reduction = "pca", new.reduction = "integrated.cca",
-        normalization.method = "SCT", verbose = TRUE
+        assay = "SCT", normalization.method = "SCT", verbose = TRUE
     )
     obj <- FindNeighbors(obj, reduction = "integrated.cca", dims = dims, verbose = FALSE)
     obj <- FindClusters(obj, resolution = res, cluster.name = "cca_clusters", verbose = FALSE)
@@ -562,23 +592,30 @@ tryCatch({
     split_cache <- file.path(prep_dir, "integration_split_prepared.rds")
 
     if (!prep$integratable) {
-        .log_warn(
-            "Harmony/RPCA/CCA require >= 2 batches in '%s' (found %d). Skipping integration run.",
-            prep$batch_col, prep$n_batches
-        )
-        .log_warn(
-            "For single-sample data use prep/nonintegrated outputs. To integrate, provide an RDS with multiple samples (sample_id levels)."
-        )
-        summary_df <- data.frame(
-            method = methods,
-            rds = NA_character_,
-            status = "skipped_single_batch",
-            stringsAsFactors = FALSE
-        )
-        summary_csv <- file.path(tab_dir, "integration_methods_summary.csv")
-        write.csv(summary_df, summary_csv, row.names = FALSE)
-        .log_info("Integration methods summary: %s", summary_csv)
-        quit(save = "no", status = 0)
+        reason <- prep$skip_reason %||% "unknown"
+        if (identical(reason, "single_batch")) {
+            .log_warn(
+                "Harmony/RPCA/CCA require >= 2 batches in '%s' (found %d). Skipping integration run.",
+                prep$batch_col, prep$n_batches
+            )
+            .log_warn(
+                "For single-sample data use prep/nonintegrated outputs. To integrate, provide an RDS with multiple samples (sample_id levels)."
+            )
+            summary_df <- data.frame(
+                method = methods,
+                rds = NA_character_,
+                status = "skipped_single_batch",
+                stringsAsFactors = FALSE
+            )
+            summary_csv <- file.path(tab_dir, "integration_methods_summary.csv")
+            write.csv(summary_df, summary_csv, row.names = FALSE)
+            .log_info("Integration methods summary: %s", summary_csv)
+            quit(save = "no", status = 0)
+        }
+        stop(sprintf(
+            "Integration prep failed for batch '%s' (%d levels): %s",
+            prep$batch_col, prep$n_batches, reason
+        ))
     }
 
     if (force_flag || !file.exists(split_cache) || file.info(split_cache)$size <= 0L) {
