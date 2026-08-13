@@ -88,6 +88,20 @@
 .log_warn <- function(...) cat(sprintf("[%s] WARN  %s\n", format(Sys.time(), "%H:%M:%S"), sprintf(...)))
 .log_error <- function(...) cat(sprintf("[%s] ERROR %s\n", format(Sys.time(), "%H:%M:%S"), sprintf(...)), file = stderr())
 
+.bind_annotation_python <- function() {
+    py <- Sys.getenv("HKOCA_ANNOTATION_PYTHON", unset = "")
+    if (!nzchar(py)) py <- Sys.getenv("RETICULATE_PYTHON", unset = "")
+    if (!nzchar(py) || !file.exists(py)) return(invisible(FALSE))
+    Sys.setenv(RETICULATE_PYTHON = py)
+    if (requireNamespace("reticulate", quietly = TRUE) &&
+        !isTRUE(reticulate::py_available(initialize = FALSE))) {
+        tryCatch(reticulate::use_python(py, required = TRUE), error = function(e) {
+            .log_warn("Could not bind annotation Python (%s): %s", py, conditionMessage(e))
+        })
+    }
+    invisible(TRUE)
+}
+
 .load_packages <- function() {
     required <- c(
         "Seurat", "ggplot2", "patchwork", "harmony",
@@ -99,6 +113,7 @@
             "Missing R packages: %s\nCreate conda env: conda env create -f conda/environment_integration.yaml",
             paste(missing, collapse = ", ")
         ))
+    .bind_annotation_python()
     suppressPackageStartupMessages({
         library(Seurat)
         library(ggplot2)
@@ -163,12 +178,10 @@
         return(obj)
     }
 
-    py <- Sys.getenv("HKOCA_ANNOTATION_PYTHON", unset = "")
-    if (!nzchar(py)) py <- Sys.getenv("RETICULATE_PYTHON", unset = "")
-    if (nzchar(py)) {
-        tryCatch(reticulate::use_python(py, required = TRUE), error = function(e) {
-            .log_warn("[%s] Could not use annotation Python (%s): %s", method_label, py, conditionMessage(e))
-        })
+    .bind_annotation_python()
+    py_cfg <- tryCatch(reticulate::py_config(), error = function(e) NULL)
+    if (!is.null(py_cfg)) {
+        .log_info("[%s] Snapseed Python (reticulate): %s", method_label, py_cfg$python)
     }
     if (!reticulate::py_module_available("snapseed")) {
         .log_warn(
@@ -185,11 +198,19 @@
     dir.create(ann_dir, recursive = TRUE, showWarnings = FALSE)
     .log_info("[%s] Running Snapseed re-annotation (Level 3 -> celltype_final).", method_label)
 
-    marker_dict <- tryCatch(yaml::read_yaml(markers_yaml_path), error = function(e) NULL)
-    if (is.null(marker_dict)) {
-        .log_warn("[%s] Could not parse markers YAML, skipping re-annotation.", method_label)
-        return(obj)
-    }
+    # Load markers in Python (same as hkoca annotation). R yaml + r_to_py
+    # produces untyped lists that snapseed cannot consume.
+    marker_py <- tryCatch({
+        yaml_mod <- reticulate::import("yaml")
+        builtins <- reticulate::import_builtins()
+        fh <- builtins$open(markers_yaml_path, "r")
+        on.exit(try(fh$close(), silent = TRUE), add = TRUE)
+        yaml_mod$safe_load(fh)
+    }, error = function(e) {
+        .log_warn("[%s] Could not parse markers YAML in Python: %s", method_label, conditionMessage(e))
+        NULL
+    })
+    if (is.null(marker_py)) return(obj)
 
     Idents(obj) <- cluster_col
     DefaultAssay(obj) <- "RNA"
@@ -206,9 +227,8 @@
     obs <- reticulate::r_to_py(obj@meta.data, convert = TRUE)
     var <- reticulate::r_to_py(data.frame(index = rownames(obj)), convert = TRUE)
     adata <- sc$AnnData(X = X, obs = obs, var = var)
-    adata$obs[[cluster_col]] <- reticulate::r_to_py(as.character(Idents(obj)))
+    adata$obs[[cluster_col]] <- as.character(Idents(obj))
 
-    marker_py <- reticulate::r_to_py(marker_dict, convert = TRUE)
     results <- tryCatch(
         snapseed$annotate_hierarchy(adata, marker_py, group_name = cluster_col),
         error = function(e) {
