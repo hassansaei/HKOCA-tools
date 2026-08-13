@@ -62,6 +62,88 @@ HKOCA_FEATURE_COLS <- c("grey85", "black")
     ggsave(path, plot = plot, width = width, height = height, dpi = dpi, bg = "white")
 }
 
+.annotation_level_columns <- function(meta) {
+    preferred <- c("Level_1", "Level_2", "Level_3")
+    present <- preferred[preferred %in% colnames(meta)]
+    if (length(present)) return(present)
+    # Fallback: resolution-suffixed aliases
+    for (prefix in c("Level_1", "Level_2", "Level_3")) {
+        hits <- grep(paste0("^", prefix, "(_|$)"), colnames(meta), value = TRUE)
+        hits <- hits[!grepl("_score$", hits)]
+        if (length(hits)) present <- c(present, hits[[1]])
+    }
+    unique(present)
+}
+
+.save_celltype_proportion_plots <- function(obj, out_dir, group.by = "sample_id",
+                                              palettes = NULL, method_label = "Non-integrated") {
+    if (!requireNamespace("dittoSeq", quietly = TRUE)) {
+        .log_warn("[%s] Package dittoSeq not available; skipping proportion bar plots.", method_label)
+        return(character(0))
+    }
+    if (is.null(palettes) || !is.list(palettes)) {
+        .log_warn("[%s] No HKOCA palettes loaded; skipping proportion bar plots.", method_label)
+        return(character(0))
+    }
+
+    level_cols <- .annotation_level_columns(obj@meta.data)
+    if (!length(level_cols)) {
+        .log_warn(
+            "[%s] No Level_1/2/3 columns in metadata; skipping proportion plots (pass --annotated-h5ad).",
+            method_label
+        )
+        return(character(0))
+    }
+
+    if (!group.by %in% colnames(obj@meta.data)) {
+        alt <- if ("orig.ident" %in% colnames(obj@meta.data)) "orig.ident" else NA_character_
+        if (is.na(alt)) {
+            .log_warn("[%s] group.by '%s' missing; skipping proportion plots.", method_label, group.by)
+            return(character(0))
+        }
+        .log_warn("[%s] '%s' missing; using '%s' for proportion plots.", method_label, group.by, alt)
+        group.by <- alt
+    }
+
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    saved <- character(0)
+    for (var_col in level_cols) {
+        colors <- tryCatch(
+            ditto_colors_for_meta(obj, var_col, palettes = palettes),
+            error = function(e) {
+                .log_warn("[%s] Color lookup failed for %s: %s", method_label, var_col, conditionMessage(e))
+                NULL
+            }
+        )
+        if (is.null(colors) || !length(colors)) next
+
+        title <- sprintf("%s proportions per %s", gsub("_", " ", var_col, fixed = TRUE), group.by)
+        out_path <- file.path(out_dir, sprintf("celltype_proportion_%s.png", var_col))
+        p <- tryCatch({
+            dittoSeq::dittoBarPlot(
+                obj,
+                var = var_col,
+                group.by = group.by,
+                main = title
+            ) +
+                ggplot2::scale_fill_manual(
+                    values = colors,
+                    na.value = palettes$fallback %||% "#BBBBBB"
+                ) +
+                ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+        }, error = function(e) {
+            .log_warn("[%s] dittoBarPlot failed for %s: %s", method_label, var_col, conditionMessage(e))
+            NULL
+        })
+        if (is.null(p)) next
+
+        .save_ggplot_png(out_path, p, width = 8, height = 6)
+        .log_info("[%s] Saved proportion plot: %s", method_label, out_path)
+        saved <- c(saved, out_path)
+    }
+    saved
+}
+
 .hkoca_dim_plot <- function(obj, reduction, ..., group.by = NULL) {
     args <- list(
         object = obj,

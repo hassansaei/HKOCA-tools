@@ -114,6 +114,8 @@ scale_fill_hkoca_celltypes <- function(level = "combined", palettes = NULL, yaml
 ditto_colors_for_meta <- function(seurat_obj, metadata_col, palettes = NULL, yaml_path = NULL) {
     level <- infer_palette_level(metadata_col)
     if (is.null(palettes)) palettes <- load_hkoca_celltype_palettes(yaml_path)
-    labels <- sort(unique(as.character(seurat_obj[[metadata_col, drop = TRUE]])))
+    labels <- unique(as.character(seurat_obj[[metadata_col, drop = TRUE]]))
+    labels <- sort(labels[nzchar(labels) & !is.na(labels) &
+                            !tolower(labels) %in% c("na", "nan", "none", "unassigned")])
     colors_for_labels(labels, level = level, palettes = palettes)
 }

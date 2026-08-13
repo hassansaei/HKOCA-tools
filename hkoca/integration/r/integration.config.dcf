@@ -11,7 +11,7 @@ annotated_h5ad: null
 # Output base directory (override with --output_dir).
 # Layout:
 #   prep/              per-sample SCT + merge object + elbow/clustree/silhouette
-#   nonintegrated/     pre-integration UMAP + FeaturePlots
+#   nonintegrated/     pre-integration UMAP + Level_1/2/3 proportion bars + FeaturePlots
 #   harmony/ rpca/ cca/ per-method figures
 #   objects/           integrated_*.rds
 #   tables/            silhouette + summary CSVs

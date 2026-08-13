@@ -124,7 +124,8 @@
 .load_integration_packages <- function() {
     required <- c(
         "Seurat", "ggplot2", "patchwork", "clustree", "glmGamPoi",
-        "cluster", "digest", "jsonlite", "yaml", "dplyr", "tidyr"
+        "cluster", "digest", "jsonlite", "yaml", "dplyr", "tidyr",
+        "dittoSeq", "reticulate"
     )
     missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
     if (length(missing))
@@ -144,6 +145,8 @@
         library(yaml)
         library(dplyr)
         library(tidyr)
+        library(dittoSeq)
+        library(reticulate)
     })
 }
 
@@ -177,6 +180,85 @@
     obj[["percent.mito"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
     if (mito_col != "percent.mito") {
         obj[[mito_col]] <- obj[["percent.mito"]]
+    }
+    obj
+}
+
+.strip_barcode_suffix <- function(barcodes) {
+    sub("-[0-9]+$", "", as.character(barcodes))
+}
+
+.transfer_annotation_from_h5ad <- function(obj, h5ad_path) {
+    wanted <- c("Level_1", "Level_2", "Level_3")
+    already <- wanted[wanted %in% colnames(obj@meta.data)]
+    if (length(already) == length(wanted)) {
+        .log_info("Level_1/2/3 already present in Seurat metadata; skipping h5ad transfer.")
+        return(obj)
+    }
+    if (is.na(h5ad_path) || !nzchar(h5ad_path) || !file.exists(h5ad_path)) {
+        .log_warn("No annotated h5ad provided; Level proportion plots may be skipped.")
+        return(obj)
+    }
+
+    .log_info("Transferring Level_1/2/3 from annotated h5ad: %s", h5ad_path)
+    ann_py <- Sys.getenv("HKOCA_ANNOTATION_PYTHON", unset = "")
+    if (nzchar(ann_py) && file.exists(ann_py)) {
+        tryCatch(reticulate::use_python(ann_py, required = FALSE), error = function(e) NULL)
+    }
+    if (!reticulate::py_module_available("scanpy") && !reticulate::py_module_available("anndata")) {
+        .log_warn("Python scanpy/anndata not available via reticulate; cannot transfer annotation.")
+        return(obj)
+    }
+
+    obs_df <- tryCatch({
+        if (reticulate::py_module_available("scanpy")) {
+            sc <- reticulate::import("scanpy", convert = FALSE)
+            ad <- sc$read_h5ad(h5ad_path)
+        } else {
+            anndata <- reticulate::import("anndata", convert = FALSE)
+            ad <- anndata$read_h5ad(h5ad_path)
+        }
+        reticulate::py_to_r(ad$obs)
+    }, error = function(e) {
+        .log_warn("Failed to read annotated h5ad obs: %s", conditionMessage(e))
+        NULL
+    })
+    if (is.null(obs_df) || !nrow(obs_df)) return(obj)
+
+    avail <- intersect(wanted, colnames(obs_df))
+    if (!length(avail)) {
+        .log_warn("Annotated h5ad has no Level_1/2/3 columns.")
+        return(obj)
+    }
+
+    seurat_cells <- colnames(obj)
+    h5ad_cells <- rownames(obs_df)
+    map_from <- seurat_cells
+    map_to <- match(seurat_cells, h5ad_cells)
+
+    if (sum(!is.na(map_to)) < 0.5 * length(seurat_cells)) {
+        # Try stripped barcode match (Seurat -1 suffixes / h5ad bare barcodes)
+        map_to <- match(.strip_barcode_suffix(seurat_cells), .strip_barcode_suffix(h5ad_cells))
+    }
+    if (sum(!is.na(map_to)) < 0.5 * length(seurat_cells)) {
+        # Try matching on trailing barcode token after '_'
+        seurat_tail <- sub("^.*_", "", seurat_cells)
+        h5ad_tail <- sub("^.*_", "", h5ad_cells)
+        map_to <- match(seurat_tail, h5ad_tail)
+    }
+
+    n_matched <- sum(!is.na(map_to))
+    .log_info("Matched %d / %d cells to annotated h5ad.", n_matched, length(seurat_cells))
+    if (n_matched == 0L) {
+        .log_warn("No overlapping cell barcodes between RDS and annotated h5ad.")
+        return(obj)
+    }
+
+    for (col in avail) {
+        vals <- rep(NA_character_, length(seurat_cells))
+        vals[!is.na(map_to)] <- as.character(obs_df[[col]][map_to[!is.na(map_to)]])
+        obj[[col]] <- vals
+        .log_info("  Added metadata column '%s' (%d non-missing).", col, sum(!is.na(vals) & nzchar(vals)))
     }
     obj
 }
@@ -272,7 +354,7 @@
 }
 
 .run_nonintegrated_umap_and_plots <- function(obj, out_dir, dims, cluster_col,
-                                              markers_yaml_path) {
+                                              markers_yaml_path, palettes = NULL) {
     .log_info("Running non-integrated UMAP from PCA.")
     obj <- RunUMAP(
         obj,
@@ -290,6 +372,13 @@
         method_label = "Non-integrated",
         feature_assay = "RNA"
     )
+    prop_paths <- .save_celltype_proportion_plots(
+        obj, out_dir,
+        group.by = "sample_id",
+        palettes = palettes,
+        method_label = "Non-integrated"
+    )
+    vis$proportion_plots <- prop_paths
     list(object = obj, outputs = vis)
 }
 
@@ -426,12 +515,15 @@ tryCatch({
 
     if (!is.na(annotated_h5ad) && nzchar(annotated_h5ad)) {
         if (file.exists(annotated_h5ad)) {
-            .log_info("Annotated h5ad registered for later steps: %s", annotated_h5ad)
+            .log_info("Annotated h5ad: %s", annotated_h5ad)
         } else {
             .log_info("Annotated h5ad path not found (continuing prep): %s", annotated_h5ad)
+            annotated_h5ad <- NA_character_
         }
     }
 
+    # Transfer Level labels before SplitObject/merge so barcodes still match
+    obj <- .transfer_annotation_from_h5ad(obj, annotated_h5ad)
     obj <- .ensure_mito_percent(obj, mito_col)
     batch_col <- .detect_batch_column(obj, batch_key)
 
@@ -522,7 +614,8 @@ tryCatch({
         stop(sprintf("Selected cluster column not found in metadata: %s", cluster_col))
     }
     nonint_result <- .run_nonintegrated_umap_and_plots(
-        obj, nonint_dir, neighbor_dims, cluster_col, markers_yaml
+        obj, nonint_dir, neighbor_dims, cluster_col, markers_yaml,
+        palettes = hkoca_palettes
     )
     obj <- nonint_result$object
     nonintegrated_outputs <- nonint_result$outputs
@@ -544,6 +637,7 @@ tryCatch({
             nonintegrated_umap = nonintegrated_outputs$overall,
             nonintegrated_split_columns = nonintegrated_outputs$split_columns,
             nonintegrated_feature_plots = length(nonintegrated_outputs$feature_plots),
+            nonintegrated_proportion_plots = nonintegrated_outputs$proportion_plots,
             silhouette_csv = sil_csv,
             resolution_summary = summary_csv
         ),
