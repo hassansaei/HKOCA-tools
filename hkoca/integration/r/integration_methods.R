@@ -1,10 +1,8 @@
 # =============================================================================
 # HKOCA Integration - Methods stage (Harmony / RPCA / CCA + re-annotation)
 #
-# Reads the SCT-prepared Seurat RDS produced by integration_prep.R, runs one
-# or more integration methods, generates per-method UMAP + FeaturePlot figures
-# in dedicated subdirectories, optionally re-annotates with Snapseed (Level 3,
-# stored as celltype_final), and saves one RDS per method.
+# Reads the SCT-prepared Seurat RDS from integration_prep.R (per-sample SCT +
+# merge + PCA). Runs IntegrateLayers only — no second SCTransform.
 #
 # Usage:
 #   Rscript integration_methods.R \
@@ -284,28 +282,8 @@
 }
 
 # =============================================================================
-# Batch / layer preparation for Seurat v5 IntegrateLayers
+# Validate prep object for IntegrateLayers (no second SCTransform)
 # =============================================================================
-
-.ensure_mito_percent <- function(obj, mito_col) {
-    if (mito_col %in% colnames(obj@meta.data)) return(obj)
-    .log_info("Column '%s' missing; computing from MT- genes.", mito_col)
-    obj[["percent.mito"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
-    if (mito_col != "percent.mito") {
-        obj[[mito_col]] <- obj[["percent.mito"]]
-    }
-    obj
-}
-
-.join_rna_layers_if_needed <- function(obj) {
-    assay_name <- "RNA"
-    if (!assay_name %in% Assays(obj)) return(obj)
-    assay_obj <- tryCatch(obj[[assay_name]], error = function(e) NULL)
-    if (!is.null(assay_obj) && inherits(assay_obj, "Assay5") && exists("JoinLayers", mode = "function")) {
-        obj <- JoinLayers(obj, assay = assay_name)
-    }
-    obj
-}
 
 .count_batch_levels <- function(obj, batch_col) {
     vals <- as.character(obj@meta.data[[batch_col]])
@@ -347,14 +325,26 @@
     if (inherits(assay_obj, "SCTAssay") && "SCTModel.list" %in% slotNames(assay_obj)) {
         return(length(slot(assay_obj, "SCTModel.list")))
     }
-    # Fallback: Assay5-style SCT layers (unusual, but handle if present)
     .count_assay5_batch_layers(obj, "SCT")
 }
 
-.prepare_integration_object <- function(obj, cfg) {
+.validate_prepared_for_integration <- function(obj, cfg) {
     batch_col <- .detect_batch_column(obj, cfg$integration_batch_key %||% "sample_id")
     n_batches <- .count_batch_levels(obj, batch_col)
-    .log_info("Integration batch column: '%s' (%d level(s)).", batch_col, n_batches)
+    n_sct_models <- .count_sct_models(obj)
+    n_rna_layers <- .count_assay5_batch_layers(obj, "RNA")
+
+    .log_info(
+        "Prepared object check: batch='%s' (%d), SCT models=%d, RNA layers=%d.",
+        batch_col, n_batches, n_sct_models, n_rna_layers
+    )
+
+    if (!"SCT" %in% Assays(obj)) {
+        stop("Prepared object has no SCT assay. Re-run: hkoca integration prep")
+    }
+    if (!"pca" %in% Reductions(obj)) {
+        stop("Prepared object has no PCA reduction. Re-run: hkoca integration prep")
+    }
 
     if (n_batches < 2L) {
         return(list(
@@ -366,80 +356,20 @@
         ))
     }
 
-    if (!"RNA" %in% Assays(obj)) stop("RNA assay required for IntegrateLayers.")
-
-    n_cells_before <- ncol(obj)
-    mito_col <- cfg$mito_regress %||% "percent.mito"
-    n_features <- as.integer(cfg$n_features %||% 2500L)
-    npcs <- as.integer(cfg$npcs %||% 50L)
-
-    obj <- .join_rna_layers_if_needed(obj)
-    obj <- .ensure_mito_percent(obj, mito_col)
-
-    batch <- obj@meta.data[[batch_col]]
-    .log_info("Splitting RNA assay by '%s'.", batch_col)
-    obj[["RNA"]] <- split(obj[["RNA"]], f = batch)
-    n_rna_layers <- .count_assay5_batch_layers(obj, "RNA")
-    .log_info("Split RNA assay into %d layer(s).", n_rna_layers)
-    if (n_rna_layers < 2L) {
+    if (n_sct_models < 2L && n_rna_layers < 2L) {
         return(list(
             object = obj,
             batch_col = batch_col,
             n_batches = n_batches,
             integratable = FALSE,
-            skip_reason = sprintf("rna_layers_%d", n_rna_layers)
+            skip_reason = sprintf(
+                "need_split_sct_prep (SCT models=%d, RNA layers=%d); re-run integration prep",
+                n_sct_models, n_rna_layers
+            )
         ))
     }
 
-    # Drop prep SCT so SCTransform rebuilds models from split RNA layers
-    if ("SCT" %in% Assays(obj)) {
-        .log_info("Removing existing SCT assay before split-layer SCTransform.")
-        obj[["SCT"]] <- NULL
-    }
-
-    .log_info("Running SCTransform on split RNA layers (regress %s).", mito_col)
-    DefaultAssay(obj) <- "RNA"
-    obj <- SCTransform(
-        obj,
-        assay = "RNA",
-        method = "glmGamPoi",
-        vars.to.regress = mito_col,
-        vst.flavor = "v2",
-        verbose = FALSE
-    )
     DefaultAssay(obj) <- "SCT"
-
-    n_sct_models <- .count_sct_models(obj)
-    .log_info(
-        "SCT assay class=%s with %d model(s).",
-        paste(class(obj[["SCT"]]), collapse = "/"), n_sct_models
-    )
-    if (n_sct_models < 2L) {
-        return(list(
-            object = obj,
-            batch_col = batch_col,
-            n_batches = n_batches,
-            integratable = FALSE,
-            skip_reason = sprintf("sct_models_%d", n_sct_models)
-        ))
-    }
-
-    obj <- FindVariableFeatures(
-        obj, selection.method = "vst", assay = "SCT", nfeatures = n_features, verbose = FALSE
-    )
-
-    .log_info("Running PCA on SCT residuals (npcs=%d).", npcs)
-    obj <- RunPCA(obj, npcs = npcs, verbose = FALSE)
-
-    n_cells_after <- ncol(obj)
-    .log_info(
-        "Cells after split SCT+PCA: %s (loaded %s).",
-        format(n_cells_after, big.mark = ","), format(n_cells_before, big.mark = ",")
-    )
-    if (n_cells_after != n_cells_before) {
-        .log_warn("Cell count changed after split SCT+PCA (%d -> %d).", n_cells_before, n_cells_after)
-    }
-
     list(
         object = obj,
         batch_col = batch_col,
@@ -580,16 +510,14 @@ tryCatch({
     .load_packages()
 
     .log_info("Loading prepared Seurat object: %s", prepared_rds)
-    obj_base <- readRDS(prepared_rds)
-    if (!inherits(obj_base, "Seurat"))
+    obj_check <- readRDS(prepared_rds)
+    if (!inherits(obj_check, "Seurat"))
         stop("prepared_rds must be a Seurat object.")
-    .log_info("Loaded %s cells x %s features", format(ncol(obj_base), big.mark = ","), format(nrow(obj_base), big.mark = ","))
+    .log_info("Loaded %s cells x %s features", format(ncol(obj_check), big.mark = ","), format(nrow(obj_check), big.mark = ","))
 
-    prep <- .prepare_integration_object(obj_base, cfg)
-    obj_base <- prep$object
-
-    prep_dir <- dirname(prepared_rds)
-    split_cache <- file.path(prep_dir, "integration_split_prepared.rds")
+    prep <- .validate_prepared_for_integration(obj_check, cfg)
+    rm(obj_check)
+    gc(verbose = FALSE)
 
     if (!prep$integratable) {
         reason <- prep$skip_reason %||% "unknown"
@@ -613,17 +541,15 @@ tryCatch({
             quit(save = "no", status = 0)
         }
         stop(sprintf(
-            "Integration prep failed for batch '%s' (%d levels): %s",
-            prep$batch_col, prep$n_batches, reason
+            "Prepared object not ready for IntegrateLayers (%s). Re-run: hkoca integration prep --force-overwrite",
+            reason
         ))
     }
 
-    if (force_flag || !file.exists(split_cache) || file.info(split_cache)$size <= 0L) {
-        .log_info("Caching split SCT+PCA object: %s", split_cache)
-        saveRDS(prep$object, split_cache)
-    } else {
-        .log_info("Using cached split SCT+PCA object: %s", split_cache)
-    }
+    .log_info(
+        "Using prep SCT+PCA object for IntegrateLayers (batch='%s', %d levels).",
+        prep$batch_col, prep$n_batches
+    )
 
     results <- list()
 
@@ -640,7 +566,8 @@ tryCatch({
         }
 
         obj_method <- tryCatch({
-            obj_work <- readRDS(split_cache)
+            obj_work <- readRDS(prepared_rds)
+            DefaultAssay(obj_work) <- "SCT"
             switch(method,
                 harmony = .integrate_harmony(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir),
                 rpca    = .integrate_rpca(obj_work, cfg, method_fig_dir, markers_yaml, method_ann_dir),
@@ -664,6 +591,8 @@ tryCatch({
         saveRDS(obj_method, out_rds)
         results[[method]] <- list(rds = out_rds, status = "done")
         .log_info("[%s] Completed.", method)
+        rm(obj_method)
+        gc(verbose = FALSE)
     }
 
     summary_df <- data.frame(
@@ -683,9 +612,11 @@ tryCatch({
     }
 
     if (remove_flag) {
+        prep_dir <- dirname(prepared_rds)
         prep_meta <- file.path(prep_dir, ".sct_prepared.meta.json")
+        split_cache <- file.path(prep_dir, "integration_split_prepared.rds")
         .remove_path(prepared_rds, "SCT prepared RDS")
-        .remove_path(split_cache, "split integration RDS")
+        .remove_path(split_cache, "legacy split integration RDS")
         .remove_path(prep_meta, "prep metadata")
     }
 

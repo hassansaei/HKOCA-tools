@@ -1,8 +1,10 @@
 # =============================================================================
-# HKOCA Integration - Prep stage (SCT + resolution selection)
+# HKOCA Integration - Prep stage (per-sample SCT + merge + resolution selection)
 #
-# Loads a QC-filtered Seurat RDS (singlets filtered), normalizes RNA, runs
-# SCTransform (glmGamPoi), PCA elbow, clustree, and silhouette scoring.
+# Loads a QC-filtered Seurat RDS, splits by sample_id, runs SCTransform on each
+# sample, merges into one object (layers retained), then PCA / clustree /
+# silhouette / non-integrated UMAP. JoinLayers is not applied here; join RNA
+# only later for FindAllMarkers if needed.
 #
 # Usage:
 #   Rscript integration_prep.R --input_rds PATH --output_dir PATH [--config PATH]
@@ -179,13 +181,93 @@
     obj
 }
 
-.join_rna_layers_if_needed <- function(obj) {
-    assay_name <- "RNA"
-    if (!assay_name %in% Assays(obj)) return(obj)
-    assay_obj <- tryCatch(obj[[assay_name]], error = function(e) NULL)
-    if (!is.null(assay_obj) && inherits(assay_obj, "Assay5") && exists("JoinLayers", mode = "function")) {
-        obj <- JoinLayers(obj, assay = assay_name)
+.count_batch_levels <- function(obj, batch_col) {
+    vals <- as.character(obj@meta.data[[batch_col]])
+    length(unique(vals[nzchar(vals) & !is.na(vals)]))
+}
+
+.detect_batch_column <- function(obj, preferred = NULL) {
+    if (!is.null(preferred) && nzchar(preferred)) {
+        if (!preferred %in% colnames(obj@meta.data)) {
+            stop(sprintf("Configured integration_batch_key '%s' not found in metadata.", preferred))
+        }
+        return(preferred)
     }
+    candidates <- c("sample_id", "orig.ident", "study", "batch", "dataset")
+    for (col in candidates) {
+        if (col %in% colnames(obj@meta.data) && .count_batch_levels(obj, col) >= 2L) {
+            return(col)
+        }
+    }
+    for (col in candidates) {
+        if (col %in% colnames(obj@meta.data)) return(col)
+    }
+    stop("No batch column found in metadata (expected sample_id, orig.ident, or study).")
+}
+
+.sct_one_sample <- function(x, mito_col, sample_label) {
+    .log_info(
+        "SCTransform sample '%s' (%s cells).",
+        sample_label, format(ncol(x), big.mark = ",")
+    )
+    DefaultAssay(x) <- "RNA"
+    if ("SCT" %in% Assays(x)) {
+        DefaultAssay(x) <- "RNA"
+        x[["SCT"]] <- NULL
+    }
+    assay_obj <- tryCatch(x[["RNA"]], error = function(e) NULL)
+    if (!is.null(assay_obj) && inherits(assay_obj, "Assay5") && exists("JoinLayers", mode = "function")) {
+        n_layers <- tryCatch(length(Layers(assay_obj)), error = function(e) 1L)
+        if (n_layers > 1L) x[["RNA"]] <- JoinLayers(assay_obj)
+    }
+    SCTransform(
+        x,
+        assay = "RNA",
+        method = "glmGamPoi",
+        vars.to.regress = mito_col,
+        vst.flavor = "v2",
+        verbose = FALSE
+    )
+}
+
+.split_sct_merge <- function(obj, batch_col, mito_col, n_features) {
+    n_batches <- .count_batch_levels(obj, batch_col)
+    .log_info("Integration batch column: '%s' (%d level(s)).", batch_col, n_batches)
+
+    if (n_batches < 2L) {
+        .log_info("Single batch; running one SCTransform (no merge).")
+        obj <- .sct_one_sample(obj, mito_col, "all")
+        DefaultAssay(obj) <- "SCT"
+        obj <- FindVariableFeatures(
+            obj, selection.method = "vst", assay = "SCT",
+            nfeatures = n_features, verbose = FALSE
+        )
+        return(obj)
+    }
+
+    .log_info("SplitObject by '%s' for per-sample SCTransform.", batch_col)
+    obj_list <- SplitObject(obj, split.by = batch_col)
+    sample_names <- names(obj_list)
+    if (is.null(sample_names) || !length(sample_names)) {
+        sample_names <- as.character(seq_along(obj_list))
+    }
+
+    obj_list <- lapply(seq_along(obj_list), function(i) {
+        .sct_one_sample(obj_list[[i]], mito_col, sample_names[[i]])
+    })
+    names(obj_list) <- sample_names
+
+    .log_info("Merging %d SCT-normalized samples (layers retained).", length(obj_list))
+    obj <- merge(x = obj_list[[1]], y = obj_list[-1], project = "hkoca_integration")
+    DefaultAssay(obj) <- "SCT"
+
+    .log_info("Selecting integration variable features (n=%d).", n_features)
+    features <- SelectIntegrationFeatures(object.list = obj_list, nfeatures = n_features)
+    VariableFeatures(obj) <- features
+    .log_info(
+        "Merged object: %s cells, %d variable features.",
+        format(ncol(obj), big.mark = ","), length(features)
+    )
     obj
 }
 
@@ -301,6 +383,7 @@ tryCatch({
     npcs <- as.integer(cfg$npcs %||% 50L)
     neighbor_dims <- .parse_dims(cfg$neighbor_dims %||% "1:30")
     mito_col <- cfg$mito_regress %||% "percent.mito"
+    batch_key <- cfg$integration_batch_key %||% "sample_id"
     resolutions <- .parse_resolutions(cfg$resolutions)
     cluster_prefix <- cfg$cluster_prefix %||% "SCT_snn_res."
     sil_subsample <- as.integer(cfg$silhouette_subsample %||% 5000L)
@@ -315,11 +398,13 @@ tryCatch({
         npcs = npcs,
         neighbor_dims = neighbor_dims,
         mito_regress = mito_col,
+        integration_batch_key = batch_key,
         resolutions = resolutions,
         cluster_prefix = cluster_prefix,
         silhouette_subsample = sil_subsample,
         silhouette_min_resolution = sil_min_resolution,
-        silhouette_min_clusters = sil_min_clusters
+        silhouette_min_clusters = sil_min_clusters,
+        prep_workflow = "split_sct_merge"
     )
 
     if (!force_flag && file.exists(prepared_rds) && file.info(prepared_rds)$size > 0 &&
@@ -347,26 +432,12 @@ tryCatch({
         }
     }
 
-    obj <- .join_rna_layers_if_needed(obj)
     obj <- .ensure_mito_percent(obj, mito_col)
+    batch_col <- .detect_batch_column(obj, batch_key)
 
-    .log_info("Normalizing RNA counts.")
-    DefaultAssay(obj) <- "RNA"
-    obj <- NormalizeData(obj, assay = "RNA", verbose = FALSE)
-
-    .log_info("Running SCTransform (glmGamPoi, regress %s).", mito_col)
-    obj <- SCTransform(
-        obj,
-        assay = "RNA",
-        method = "glmGamPoi",
-        vars.to.regress = mito_col,
-        vst.flavor = "v2",
-        verbose = FALSE
-    )
+    # Per-sample SCT then merge (do not JoinLayers on the merged object here)
+    obj <- .split_sct_merge(obj, batch_col, mito_col, n_features)
     DefaultAssay(obj) <- "SCT"
-
-    .log_info("Selecting variable features (n=%d).", n_features)
-    obj <- FindVariableFeatures(obj, selection.method = "vst", assay = "SCT", nfeatures = n_features, verbose = FALSE)
 
     .log_info("Running PCA (npcs=%d).", npcs)
     obj <- RunPCA(obj, npcs = npcs, verbose = FALSE)

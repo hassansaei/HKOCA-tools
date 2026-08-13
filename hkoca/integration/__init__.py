@@ -1,7 +1,8 @@
 """Batch integration and atlas projection (Seurat / Harmony / ...).
 
-Stage 1 (``prep``): load QC-filtered Seurat RDS, normalize RNA, SCTransform,
+Stage 1 (``prep``): SplitObject by sample, SCTransform each sample, merge,
 PCA elbow, clustree, and silhouette-based resolution selection.
+Stage 2 (``run``): IntegrateLayers on the prep object (no second SCTransform).
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_prep = sub.add_parser(
         "prep",
-        help="SCT + PCA elbow + clustree + silhouette resolution selection",
+        help="Per-sample SCT + merge + PCA elbow/clustree/silhouette",
     )
     p_prep.add_argument(
         "--input-rds",
