@@ -258,7 +258,7 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     if (length(from_cfg)) return(unique(from_cfg))
     from_env <- .parse_name_list(Sys.getenv("HKOCA_TRANSGENES", unset = ""))
     if (length(from_env)) return(unique(from_env))
-    c("AAV", "EGFP", "mCherry", "GFP", "eGFP")
+    c("AAV", "EGFP", "mCherry", "GFP", "eGFP", "LK03_eGFP")
 }
 
 .match_features_in_object <- function(obj, names) {

@@ -182,6 +182,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="QC output directory (default: <output>/qc_filter)",
     )
     parser.add_argument(
+        "--transgenes",
+        default=None,
+        help=(
+            "Comma-separated transgenes for harmonize/integration "
+            "(overrides [harmonize] transgenes in pipeline.config)"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned steps without executing them",
@@ -251,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
             projection_atlas_h5ad=args.atlas_h5ad,
             projection_model_dir=args.model_dir,
             qc_output=args.qc_output,
+            transgenes=args.transgenes,
         )
         validate_config(cfg)
     except (ValueError, FileNotFoundError) as exc:
