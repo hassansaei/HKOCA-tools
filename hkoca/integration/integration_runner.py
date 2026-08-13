@@ -101,9 +101,9 @@ def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
     return env
 
 
-def _verify_integration_env(stage: str = "integration", *, require_annotation: bool = False) -> int:
-    problems = verify_stage_env(stage)
-    if stage == "run":
+def _verify_integration_env(*, check_annotation: bool = False, require_annotation: bool = False) -> int:
+    problems = verify_stage_env("integration")
+    if check_annotation:
         ann_env = os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV).strip() or DEFAULT_ANNOTATION_ENV
         ann_prefix = resolve_env_prefix(ann_env, "python")
         if ann_prefix is None:
@@ -123,7 +123,7 @@ def _verify_integration_env(stage: str = "integration", *, require_annotation: b
                 else:
                     logger.warning("annotation: %s", msg)
     if problems:
-        log_env_problems(stage, problems)
+        log_env_problems("integration", problems)
         return 1
     return 0
 
@@ -220,7 +220,7 @@ def run_methods(
         logger.error("Prepared RDS does not exist: %s", prepared_rds)
         return 1
 
-    if not dry_run and _verify_integration_env("run") != 0:
+    if not dry_run and _verify_integration_env(check_annotation=True) != 0:
         return 1
 
     try:
@@ -268,7 +268,7 @@ def run_prep(
         logger.error("Annotated h5ad does not exist: %s", annotated_h5ad)
         return 1
 
-    if not dry_run and _verify_integration_env("integration") != 0:
+    if not dry_run and _verify_integration_env() != 0:
         return 1
 
     try:
