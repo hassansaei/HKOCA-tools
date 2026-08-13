@@ -11,6 +11,7 @@ annotated_h5ad: null
 # Output base directory (override with --output_dir).
 # Layout:
 #   prep/              SCT object + elbow/clustree/silhouette PNGs
+#                      integration_split_prepared.rds (split SCT+PCA for methods)
 #   nonintegrated/     pre-integration UMAP + FeaturePlots
 #   harmony/ rpca/ cca/ per-method figures
 #   objects/           integrated_*.rds
