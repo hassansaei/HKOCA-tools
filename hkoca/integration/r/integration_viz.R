@@ -1,9 +1,10 @@
 # Shared integration figure helpers (UMAP, FeaturePlot, silhouette selection).
 
 HKOCA_PLOT_DPI <- 300L
-HKOCA_UMAP_PT_SIZE <- 0.4
-HKOCA_UMAP_ALPHA <- 0.85
-HKOCA_FEATURE_PT_SIZE <- 0.25
+HKOCA_UMAP_PT_SIZE <- 0.9
+HKOCA_UMAP_ALPHA <- 1.0
+HKOCA_UMAP_RASTER_DPI <- c(1200L, 1200L)
+HKOCA_FEATURE_PT_SIZE <- 0.5
 HKOCA_FEATURE_COLS <- c("grey85", "black")
 
 .categorical_levels <- function(x) {
@@ -152,6 +153,7 @@ HKOCA_FEATURE_COLS <- c("grey85", "black")
         pt.size = HKOCA_UMAP_PT_SIZE,
         alpha = HKOCA_UMAP_ALPHA,
         raster = TRUE,
+        raster.dpi = HKOCA_UMAP_RASTER_DPI,
         ...
     )
     if (!is.null(group.by)) args$group.by <- group.by
