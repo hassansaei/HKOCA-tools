@@ -1,26 +1,26 @@
 # GPU required for scPoli surgery. CPU is possible but very slow.
-# pytorch-cuda 12.4 is the newest metapackage on the pytorch conda channel
-# (12.8 is not published). It runs on newer host NVIDIA drivers.
+# Scientific stack is conda-forge only. GPU PyTorch is installed from
+# pip CUDA 12.4 wheels so mamba is not forced to mix the pytorch channel
+# (strict priority blocks igraph / libjpeg-turbo and matplotlib then
+# tries Qt/PySide).
 name: hkoca_projection
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
 dependencies:
   - python=3.11
   - pip
-  - anndata>=0.10,<0.13
-  - scanpy>=1.10,<1.11
-  - scipy>=1.11,<1.15
-  - numpy>=2.0,<2.3
-  - pandas>=2.2
-  - matplotlib>=3.8
-  - scikit-learn>=1.4
-  - h5py>=3.10
+  - anndata
+  - scanpy
+  - scipy
+  - numpy
+  - pandas
+  - matplotlib-base
+  - scikit-learn
+  - h5py
   - pyyaml
-  - leidenalg>=0.10
-  - python-igraph>=0.11
-  - pytorch>=2.2
-  - pytorch-cuda=12.4
+  - leidenalg
+  - python-igraph
   - pip:
+      - --extra-index-url=https://download.pytorch.org/whl/cu124
+      - torch
       - scarches==0.6.1
