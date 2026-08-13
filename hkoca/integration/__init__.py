@@ -111,7 +111,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser(
         "run",
-        help="Run Harmony / RPCA / CCA integration + re-annotation on the prepared SCT object",
+        help="Run Harmony / RPCA / CCA integration on the prepared SCT object",
     )
     p_run.add_argument(
         "--prepared-rds",

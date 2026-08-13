@@ -91,18 +91,6 @@ def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
     env["HKOCA_TRANSGENES"] = os.environ.get("HKOCA_TRANSGENES", "").strip() or ",".join(
         DEFAULT_TRANSGENES
     )
-
-    ann_py = resolve_annotation_python()
-    if ann_py:
-        env["HKOCA_ANNOTATION_PYTHON"] = ann_py
-        env["RETICULATE_PYTHON"] = ann_py
-        logger.info("Snapseed re-annotation Python: %s", ann_py)
-    else:
-        logger.warning(
-            "Annotation env not found (%s). Snapseed re-annotation will be skipped in integration run.",
-            os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV),
-        )
-
     return env
 
 

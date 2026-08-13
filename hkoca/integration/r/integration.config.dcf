@@ -48,7 +48,7 @@ remove_intermediate: FALSE
 # Shared HKOCA cell-type colors (same as annotation module)
 celltype_colors_yaml: null
 
-# Marker YAML for FeaturePlots and re-annotation (default: packaged snapseed_markers_v4.yaml)
+# Marker YAML for FeaturePlots (default: packaged snapseed_markers_v4.yaml)
 markers_yaml: null
 
 # Reporter / transgene genes to FeaturePlot when present in the object

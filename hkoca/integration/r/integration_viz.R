@@ -557,7 +557,7 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
             group.by = "celltype_final"
         ) + ggtitle(sprintf("%s UMAP (celltype_final)", method_label))
         .save_ggplot_png(ann_path, ann_plot, width = 10, height = 7)
-        .log_info("[%s] Saved re-annotated UMAP: %s", method_label, ann_path)
+        .log_info("[%s] Saved celltype_final UMAP: %s", method_label, ann_path)
     }
 
     if ("SCT" %in% Assays(obj)) {
