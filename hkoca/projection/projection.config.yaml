@@ -1,26 +1,28 @@
-# Default HKOCA atlas projection config (scanpy ingest).
+# Default HKOCA atlas projection config (scPoli surgery).
 # CLI flags override these values.
 
 paths:
   atlas_h5ad: null
-  query_h5ad: null
+  query: null
+  model_dir: null
   output_dir: projection_results
-
-reference:
-  # Auto-detect first match when null (celltype_final, Level_3, Level_3_latest, Level_2, Level_1)
-  label_columns: null
-  batch_key: null
 
 query:
   batch_key: sample_id
   label_column: null
+  counts_layer: counts
 
-projection:
-  normalize_target_sum: 10000
-  hvg_n_top_genes: 3000
-  pca_n_comps: 50
-  neighbors_n_neighbors: 20
-  neighbors_n_pcs: 30
+reference:
+  celltype_key: Level_3_Integrated
+  condition_key: sample_id
+  unknown_label: Unknown
+  atlas_umap_key: X_umap_scpoli
+  atlas_latent_key: X_scpoli
+
+scpoli:
+  n_epochs: 50
+  pretrain_epochs: 40
+  eta: 10
   seed: 42
 
 outputs:
@@ -28,8 +30,13 @@ outputs:
   figures_subdir: figures
   tables_subdir: tables
   logs_subdir: logs
+  models_subdir: models
 
 plotting:
   save_plots: true
   dpi: 150
   skip_existing: true
+  joint_umap: false
+  atlas_umap_subsample: 80000
+  knn_neighbors: 30
+  atlas_bg_max: 120000

@@ -1,4 +1,4 @@
-"""Project query datasets onto a reference atlas (scanpy ingest)."""
+"""Project query datasets onto the HKOCA atlas with scPoli surgery."""
 
 from __future__ import annotations
 
@@ -6,93 +6,48 @@ import json
 import logging
 import random
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from hkoca.projection.config import DEFAULT_LABEL_PRIORITY, load_projection_config
+from hkoca.projection.config import load_projection_config, packaged_prototype_map_path
+from hkoca.projection.plots import (
+    composition_table,
+    knn_project_onto_atlas_umap,
+    plot_composition,
+    plot_composition_by_sample,
+    plot_confusion,
+    plot_joint_umap_panels,
+    plot_overlay,
+    plot_query_categorical,
+    plot_similarity,
+    plot_uncertainty,
+    subsample_rows,
+)
+from hkoca.projection.query_io import ensure_sample_id, load_query_adata
+from hkoca.projection.scpoli import (
+    align_to_reference_genes,
+    classify_safe,
+    ensure_raw_counts,
+    get_latent_safe,
+    load_atlas_obs,
+    load_atlas_subsample_h5py,
+    load_prototype_bridge,
+    load_query_model,
+    load_reference_genes,
+    majority_map,
+    patch_anndata_for_scarches,
+    read_atlas_obsm,
+    resolve_atlas_latent_key,
+    scpoli_placeholder_col,
+    train_query_model,
+    validate_model_dir,
+)
 
 logger = logging.getLogger("hkoca.projection")
 
-
-def _matrix_extremes(x) -> tuple[float, float]:
-    if hasattr(x, "min"):
-        return float(x.min()), float(x.max())
-    arr = np.asarray(x)
-    return float(arr.min()), float(arr.max())
-
-
-def _ensure_gene_names(adata) -> None:
-    if "features" in adata.var.columns:
-        adata.var_names = adata.var["features"].astype(str)
-    elif "gene_symbols" in adata.var.columns:
-        adata.var_names = adata.var["gene_symbols"].astype(str)
-    adata.var_names_make_unique()
-
-
-def _normalize_if_needed(adata, *, target_sum: float) -> None:
-    import scanpy as sc
-
-    _, max_val = _matrix_extremes(adata.X)
-    if max_val > 100:
-        logger.info("Raw counts detected (max=%.1f); normalize_total + log1p.", max_val)
-        sc.pp.normalize_total(adata, target_sum=target_sum)
-        sc.pp.log1p(adata)
-    else:
-        logger.info("Matrix looks normalized (max=%.1f); skipping normalize_total.", max_val)
-
-
-def _prepare_reference(adata, cfg: dict[str, Any]) -> None:
-    import scanpy as sc
-
-    _normalize_if_needed(adata, target_sum=cfg["normalize_target_sum"])
-    if "X_pca" not in adata.obsm or "neighbors" not in adata.uns:
-        logger.info("Reference missing PCA/neighbors; computing embedding on atlas.")
-        sc.pp.highly_variable_genes(adata, n_top_genes=cfg["hvg_n_top_genes"], subset=True)
-        sc.pp.scale(adata, max_value=10)
-        sc.tl.pca(adata, n_comps=cfg["pca_n_comps"])
-        sc.pp.neighbors(
-            adata,
-            n_neighbors=cfg["neighbors_n_neighbors"],
-            n_pcs=cfg["neighbors_n_pcs"],
-        )
-    if "X_umap" not in adata.obsm:
-        logger.info("Reference missing UMAP; computing UMAP on atlas.")
-        sc.tl.umap(adata)
-
-
-def _align_genes(reference, query):
-    common = reference.var_names.intersection(query.var_names)
-    if len(common) < 500:
-        raise ValueError(
-            f"Too few shared genes between atlas and query ({len(common)}). "
-            "Check gene naming / harmonization."
-        )
-    logger.info("Shared genes for projection: %d", len(common))
-    ref = reference[:, common].copy()
-    qry = query[:, common].copy()
-    qry = qry[:, ref.var_names].copy()
-    return ref, qry
-
-
-def _detect_label_columns(reference, requested: Sequence[str] | None) -> list[str]:
-    if requested:
-        cols = [c for c in requested if c in reference.obs.columns]
-        missing = [c for c in requested if c not in reference.obs.columns]
-        if missing:
-            logger.warning("Reference label columns not found (skipped): %s", ", ".join(missing))
-        if not cols:
-            raise ValueError("None of the requested reference label columns exist in the atlas.")
-        return cols
-    for col in DEFAULT_LABEL_PRIORITY:
-        if col in reference.obs.columns:
-            logger.info("Auto-selected reference label column: %s", col)
-            return [col]
-    raise ValueError(
-        "Could not detect a cell-type column on the atlas. "
-        f"Expected one of: {', '.join(DEFAULT_LABEL_PRIORITY)}"
-    )
+REQUIRED_ATLAS_OBS = ("Level_3_Integrated", "Level_2_Integrated", "Level_1_Integrated")
 
 
 def _setup_logging_file(log_path: Path) -> None:
@@ -105,374 +60,463 @@ def _setup_logging_file(log_path: Path) -> None:
     logger.addHandler(fh)
 
 
-def _save_umap_scatter(
-    umap: np.ndarray,
-    labels: pd.Series,
-    out_path: Path,
+def _require_projection_stack() -> None:
+    try:
+        import torch  # noqa: F401
+        from scarches.models.scpoli import scPoli  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "scPoli projection requires the hkoca_projection conda env "
+            "(pytorch + scarches). Create it with:\n"
+            "  conda env create -f conda/environment_projection.yaml\n"
+            "  conda activate hkoca_projection && pip install -e ."
+        ) from exc
+
+
+def _assign_predicted_labels(
+    query,
     *,
-    title: str,
-    dpi: int,
-    palette: dict[str, str] | None = None,
-    alpha: float = 0.55,
-    figsize: tuple[float, float] = (8, 6),
+    preds_proto: np.ndarray,
+    uncert: np.ndarray,
+    prototype_to_l3: dict[str, str],
+    l3_to_l2: dict[str, str],
+    l3_to_l1: dict[str, str],
 ) -> None:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
-
-    cats = [c for c in pd.Categorical(labels.astype(str)).categories if (labels.astype(str) == c).any()]
-    if palette is None:
-        cmap = plt.get_cmap("tab20", max(len(cats), 1))
-        colors = {c: cmap(i) for i, c in enumerate(cats)}
-    else:
-        from hkoca.annotation.colors import fallback_color, lookup_color
-
-        colors = {c: lookup_color(c, palette) for c in cats}
-
-    fig, ax = plt.subplots(figsize=figsize)
-    lbl = labels.astype(str)
-    for cat in cats:
-        mask = lbl == cat
-        ax.scatter(
-            umap[mask, 0],
-            umap[mask, 1],
-            s=4,
-            c=[colors[cat]],
-            rasterized=True,
-            alpha=alpha,
+    proto = pd.Series(np.asarray(preds_proto).astype(str), index=query.obs_names)
+    mapped = proto.map(prototype_to_l3)
+    n_unmapped = int(mapped.isna().sum())
+    if n_unmapped:
+        missing = sorted(proto[mapped.isna()].unique().tolist())
+        logger.warning(
+            "%d cells have prototype labels missing from the bridge map: %s",
+            n_unmapped,
+            ", ".join(missing[:12]),
         )
-    ax.set_title(title)
-    ax.set_xlabel("UMAP 1")
-    ax.set_ylabel("UMAP 2")
-    if palette is not None and cats:
-        handles = [
-            Line2D([0], [0], marker="o", color="w", markerfacecolor=colors[c], markersize=6, label=c)
-            for c in cats
-        ]
-        ax.legend(handles=handles, loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=7, frameon=False)
-        fig.tight_layout(rect=(0, 0, 0.72, 1))
-    else:
-        fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
+        mapped = mapped.fillna(proto)
+    query.obs["Level_3_prototype"] = pd.Categorical(proto)
+    query.obs["Level_3_pred"] = pd.Categorical(mapped.astype(str))
+    query.obs["Level_3_uncert"] = np.asarray(uncert, dtype=np.float32)
+    query.obs["Level_2_pred"] = query.obs["Level_3_pred"].astype(str).map(l3_to_l2)
+    query.obs["Level_1_pred"] = query.obs["Level_3_pred"].astype(str).map(l3_to_l1)
+    n_l2 = int(query.obs["Level_2_pred"].isna().sum())
+    n_l1 = int(query.obs["Level_1_pred"].isna().sum())
+    if n_l2 or n_l1:
+        logger.warning(
+            "Rollup produced missing labels (Level_2_pred NA=%d, Level_1_pred NA=%d).",
+            n_l2,
+            n_l1,
+        )
 
 
-def _plot_overlay(
-    ref_umap: np.ndarray,
-    query_umap: np.ndarray,
-    query_labels: pd.Series,
-    out_path: Path,
+def _write_prediction_tables(query, tables_dir: Path, stem: str, batch_key: str) -> None:
+    cols = [c for c in (batch_key, "study", "Level_3_prototype", "Level_3_pred", "Level_3_uncert", "Level_2_pred", "Level_1_pred") if c in query.obs.columns]
+    pred_path = tables_dir / f"query_predictions_{stem}.tsv"
+    query.obs[cols].to_csv(pred_path, sep="\t")
+    logger.info("Wrote %s", pred_path)
+    if "Level_2_pred" in query.obs.columns:
+        comp = (
+            query.obs.groupby(["Level_2_pred"], observed=True)
+            .size()
+            .rename("n_cells")
+            .reset_index()
+            .sort_values("n_cells", ascending=False)
+        )
+        comp_path = tables_dir / f"query_Level2_composition_{stem}.tsv"
+        comp.to_csv(comp_path, sep="\t", index=False)
+
+
+def _maybe_joint_umap(
     *,
-    title: str,
-    dpi: int,
-    palette: dict[str, str] | None,
-) -> None:
-    import matplotlib
+    query,
+    model,
+    atlas_path: Path,
+    atlas_obs: pd.DataFrame,
+    ref_genes: list[str],
+    placeholder_col: str,
+    condition_key: str,
+    celltype_key: str,
+    unknown_label: str,
+    cfg: dict[str, Any],
+    ckpt_dir: Path,
+    figures_dir: Path,
+    stem: str,
+):
+    import anndata as ad
+    import scanpy as sc
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots(figsize=(9, 7))
-    ax.scatter(ref_umap[:, 0], ref_umap[:, 1], s=2, c="#DDDDDD", rasterized=True, alpha=0.35, label="Atlas")
-    lbl = query_labels.astype(str)
-    cats = [c for c in pd.Categorical(lbl).categories if (lbl == c).any()]
-    if palette is None:
-        cmap = plt.get_cmap("tab20", max(len(cats), 1))
-        colors = {c: cmap(i) for i, c in enumerate(cats)}
-    else:
-        from hkoca.annotation.colors import lookup_color
-
-        colors = {c: lookup_color(c, palette) for c in cats}
-    for cat in cats:
-        mask = lbl == cat
-        ax.scatter(
-            query_umap[mask, 0],
-            query_umap[mask, 1],
-            s=6,
-            c=[colors[cat]],
-            rasterized=True,
-            alpha=0.75,
-            label=cat,
+    rng = np.random.default_rng(cfg["seed"])
+    n_atlas = atlas_obs.shape[0]
+    n_take = min(int(cfg["atlas_umap_subsample"]), n_atlas)
+    atlas_sub_idx = np.sort(rng.choice(n_atlas, size=n_take, replace=False))
+    atlas_sub_barcodes = atlas_obs.index.to_numpy()[atlas_sub_idx]
+    atlas_obs_sub = atlas_obs.iloc[atlas_sub_idx].copy()
+    atlas_obs_sub["dataset_role"] = "atlas"
+    logger.info("Joint UMAP: loading atlas subsample counts (%s cells)", f"{n_take:,}")
+    atlas_sub = load_atlas_subsample_h5py(
+        atlas_path, atlas_sub_idx, atlas_obs_sub, atlas_sub_barcodes, ref_genes
+    )
+    atlas_sub.obs[placeholder_col] = unknown_label
+    atlas_sub.obs[placeholder_col] = atlas_sub.obs[placeholder_col].astype("category")
+    atlas_sub.obs[condition_key] = atlas_sub.obs[condition_key].astype(str).astype("category")
+    a_latent = np.asarray(get_latent_safe(model, atlas_sub, mean=True), dtype=np.float32)
+    atlas_sub.obsm["X_scpoli"] = a_latent
+    lat = ad.AnnData(X=np.vstack([atlas_sub.obsm["X_scpoli"], query.obsm["X_scpoli"]]))
+    lat.obs = pd.concat(
+        [
+            atlas_sub.obs[["dataset_role", condition_key, "Level_2_Integrated", celltype_key]].rename(
+                columns={"Level_2_Integrated": "Level_2_plot", celltype_key: "Level_3_plot"}
+            ),
+            query.obs[["dataset_role", condition_key, "Level_2_pred", "Level_3_pred"]].rename(
+                columns={"Level_2_pred": "Level_2_plot", "Level_3_pred": "Level_3_plot"}
+            ),
+        ],
+        axis=0,
+    )
+    lat.obs["Level_2_plot"] = lat.obs["Level_2_plot"].astype(str)
+    lat.obs["Level_3_plot"] = lat.obs["Level_3_plot"].astype(str)
+    lat.obsm["X_scpoli"] = lat.X.copy()
+    sc.pp.neighbors(lat, use_rep="X_scpoli", n_neighbors=15, random_state=cfg["seed"])
+    sc.tl.umap(lat, random_state=cfg["seed"])
+    q_mask = lat.obs["dataset_role"].to_numpy() == "query"
+    query.obsm["X_umap_joint"] = np.asarray(lat.obsm["X_umap"][q_mask], dtype=np.float32)
+    umap_path = ckpt_dir / f"joint_latent_umap_{stem}.h5ad"
+    lat.write_h5ad(umap_path, compression="gzip")
+    logger.info("Wrote exploratory joint UMAP: %s", umap_path)
+    if cfg.get("save_plots", True):
+        plot_joint_umap_panels(
+            lat,
+            query.obs["Level_3_uncert"].to_numpy(),
+            figures_dir / f"joint_umap_{stem}.png",
+            dpi=cfg["dpi"],
         )
-    ax.set_title(title)
-    ax.set_xlabel("UMAP 1")
-    ax.set_ylabel("UMAP 2")
-    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=7, frameon=False)
-    fig.tight_layout(rect=(0, 0, 0.75, 1))
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
 
 
-def _composition_table(labels: pd.Series, name: str) -> pd.DataFrame:
-    counts = labels.astype(str).value_counts()
-    total = counts.sum()
-    return pd.DataFrame(
-        {
-            "dataset": name,
-            "label": counts.index.astype(str),
-            "n_cells": counts.values,
-            "fraction": (counts.values / total).round(4),
-        }
+def _atlas_umap_figures(
+    *,
+    query,
+    atlas_path: Path,
+    atlas_obs: pd.DataFrame,
+    cfg: dict[str, Any],
+    figures_dir: Path,
+    tables_dir: Path,
+    stem: str,
+    batch_key: str,
+    query_label_column: str | None,
+) -> dict[str, Any]:
+    latent_key = resolve_atlas_latent_key(atlas_path, cfg["atlas_latent_key"])
+    umap_key = cfg["atlas_umap_key"]
+    atlas_lat = read_atlas_obsm(atlas_path, latent_key) if latent_key else None
+    atlas_umap = read_atlas_obsm(atlas_path, umap_key)
+    if atlas_lat is None or atlas_umap is None:
+        logger.warning(
+            "Atlas missing %s and/or %s; skipping atlas-UMAP overlay figures.",
+            latent_key or cfg["atlas_latent_key"],
+            umap_key,
+        )
+        return {}
+
+    q_lat = np.asarray(query.obsm["X_scpoli"], dtype=np.float32)
+    q_umap, sim, d_ref = knn_project_onto_atlas_umap(
+        atlas_lat, atlas_umap, q_lat, k=cfg["knn_neighbors"]
+    )
+    query.obsm["X_umap_scpoli_projected"] = q_umap
+    query.obs["atlas_similarity"] = sim
+
+    bg_idx = subsample_rows(atlas_umap.shape[0], cfg["atlas_bg_max"], cfg["seed"])
+    bg_umap = atlas_umap[bg_idx]
+    dpi = cfg["dpi"]
+
+    plot_overlay(
+        bg_umap,
+        q_umap,
+        query.obs["Level_3_pred"],
+        figures_dir / f"umap_overlay_Level_3_pred_{stem}.png",
+        title="Atlas + projected query (Level_3_pred)",
+        dpi=dpi,
+        palette_key="Level_3_Integrated",
+    )
+    plot_similarity(
+        bg_umap,
+        q_umap,
+        sim,
+        d_ref,
+        figures_dir / f"query_on_atlas_umap_similarity_{stem}.png",
+        dpi=dpi,
+    )
+    plot_query_categorical(
+        bg_umap,
+        q_umap,
+        query.obs["Level_3_pred"].astype(str).to_numpy(),
+        figures_dir / f"query_on_atlas_umap_Level3_pred_{stem}.png",
+        title="Query projected on atlas UMAP · Level_3_pred",
+        dpi=dpi,
+        palette_key="Level_3_Integrated",
+    )
+    plot_query_categorical(
+        bg_umap,
+        q_umap,
+        query.obs["Level_2_pred"].astype(str).to_numpy(),
+        figures_dir / f"query_on_atlas_umap_Level2_pred_{stem}.png",
+        title="Query projected on atlas UMAP · Level_2_pred",
+        dpi=dpi,
+        palette_key="Level_2_Integrated",
+    )
+    plot_query_categorical(
+        bg_umap,
+        q_umap,
+        query.obs["Level_1_pred"].astype(str).to_numpy(),
+        figures_dir / f"query_on_atlas_umap_Level1_pred_{stem}.png",
+        title="Query projected on atlas UMAP · Level_1_pred",
+        dpi=dpi,
+        palette_key="Level_1_Integrated",
+    )
+    plot_uncertainty(
+        bg_umap,
+        q_umap,
+        query.obs["Level_3_uncert"].to_numpy(dtype=float),
+        figures_dir / f"query_on_atlas_umap_uncertainty_{stem}.png",
+        dpi=dpi,
+    )
+    plot_composition_by_sample(
+        query.obs,
+        figures_dir / f"query_Level2_composition_by_sample_{stem}.png",
+        dpi=dpi,
+        batch_key=batch_key,
     )
 
+    if "Level_3_Integrated" in atlas_obs.columns:
+        ref_comp = composition_table(atlas_obs["Level_3_Integrated"], "atlas")
+        query_comp = composition_table(query.obs["Level_3_pred"], "projected_query")
+        pd.concat([ref_comp, query_comp], ignore_index=True).to_csv(
+            tables_dir / f"composition_Level_3_Integrated_{stem}.csv", index=False
+        )
+        plot_composition(ref_comp, query_comp, figures_dir / f"composition_Level_3_Integrated_{stem}.png", dpi=dpi)
 
-def _plot_composition(ref_comp: pd.DataFrame, query_comp: pd.DataFrame, out_path: Path, *, dpi: int) -> None:
-    import matplotlib
+    if query_label_column and query_label_column in query.obs.columns:
+        conf_df = plot_confusion(
+            query.obs[query_label_column],
+            query.obs["Level_3_pred"],
+            figures_dir / f"confusion_{query_label_column}_vs_Level_3_pred_{stem}.png",
+            dpi=dpi,
+        )
+        conf_df.to_csv(tables_dir / f"confusion_{query_label_column}_vs_Level_3_pred_{stem}.csv")
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    merged = pd.concat([ref_comp, query_comp], ignore_index=True)
-    labels = sorted(merged["label"].unique(), key=str)
-    datasets = merged["dataset"].unique().tolist()
-    x = np.arange(len(labels))
-    width = 0.35 if len(datasets) == 2 else 0.8 / max(len(datasets), 1)
-
-    fig, ax = plt.subplots(figsize=(max(10, len(labels) * 0.45), 5))
-    for i, ds in enumerate(datasets):
-        sub = merged[merged["dataset"] == ds].set_index("label").reindex(labels).fillna(0)
-        offset = (i - (len(datasets) - 1) / 2) * width
-        ax.bar(x + offset, sub["fraction"].values, width=width, label=ds)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_ylabel("Fraction of cells")
-    ax.set_title("Cell-type composition: atlas vs projected query")
-    ax.legend()
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-
-
-def _plot_confusion(
-    truth: pd.Series,
-    predicted: pd.Series,
-    out_path: Path,
-    *,
-    dpi: int,
-) -> pd.DataFrame:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    df = pd.crosstab(truth.astype(str), predicted.astype(str))
-    fig, ax = plt.subplots(figsize=(max(6, df.shape[1] * 0.5), max(5, df.shape[0] * 0.5)))
-    im = ax.imshow(df.values, aspect="auto", cmap="Blues")
-    ax.set_xticks(range(df.shape[1]))
-    ax.set_yticks(range(df.shape[0]))
-    ax.set_xticklabels(df.columns, rotation=45, ha="right")
-    ax.set_yticklabels(df.index)
-    ax.set_xlabel("Projected label")
-    ax.set_ylabel("Query label (ground truth)")
-    ax.set_title("Projection confusion matrix")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-    return df
-
-
-def _palette_for_label(label_col: str) -> dict[str, str] | None:
-    from hkoca.annotation.colors import (
-        combined_color_map,
-        level1_color_map,
-        level2_color_map,
-        level3_color_map,
-        palette_for_obs_key,
+    sim_stats = {
+        "n_query_cells": int(len(sim)),
+        "n_atlas_cells": int(atlas_lat.shape[0]),
+        "k_neighbors": int(cfg["knn_neighbors"]),
+        "atlas_latent_key": latent_key,
+        "atlas_umap_key": umap_key,
+        "atlas_latent_calib_dist_p95": float(d_ref),
+        "mean_similarity": float(sim.mean()),
+        "median_similarity": float(np.median(sim)),
+        "pct_ge_50": float((sim >= 0.50).mean() * 100),
+        "pct_ge_70": float((sim >= 0.70).mean() * 100),
+        "pct_ge_85": float((sim >= 0.85).mean() * 100),
+        "note": (
+            "Query cells are embedded with scPoli surgery, then placed on the "
+            "fixed atlas UMAP (X_umap_scpoli) by kNN in latent space. "
+            "Level_3_uncert is scaled per query batch (relative)."
+        ),
+    }
+    (tables_dir / f"atlas_query_similarity_summary_{stem}.json").write_text(
+        json.dumps(sim_stats, indent=2), encoding="utf-8"
     )
-
-    mapped = palette_for_obs_key(label_col)
-    if mapped is not None:
-        return mapped
-    if label_col in {"celltype_final", "Level_3", "Level_3_latest"}:
-        return level3_color_map()
-    if label_col == "Level_2":
-        return level2_color_map()
-    if label_col == "Level_1":
-        return level1_color_map()
-    return combined_color_map()
+    return sim_stats
 
 
 def project_query(
     *,
     atlas_h5ad: str | Path,
-    query_h5ad: str | Path,
+    query_path: str | Path,
+    model_dir: str | Path,
     output_dir: str | Path,
-    label_columns: Sequence[str] | None = None,
     query_label_column: str | None = None,
-    query_batch_key: str | None = "sample_id",
+    query_batch_key: str | None = None,
     cfg: dict[str, Any] | None = None,
     force: bool = False,
+    joint_umap: bool | None = None,
 ) -> Path:
-    import scanpy as sc
+    """Run scPoli surgery, prototype classify, and write labels + figures."""
+    _require_projection_stack()
+    import torch
 
     atlas_path = Path(atlas_h5ad).expanduser().resolve()
-    query_path = Path(query_h5ad).expanduser().resolve()
+    query_src = Path(query_path).expanduser().resolve()
+    model_path = Path(model_dir).expanduser().resolve()
     out_root = Path(output_dir).expanduser().resolve()
     cfg = cfg or load_projection_config()
+    if joint_umap is not None:
+        cfg = dict(cfg)
+        cfg["joint_umap"] = bool(joint_umap)
+
+    batch_key = query_batch_key or cfg.get("query_batch_key") or "sample_id"
+    condition_key = cfg.get("condition_key") or "sample_id"
+    celltype_key = cfg.get("celltype_key") or "Level_3_Integrated"
+    unknown_label = cfg.get("unknown_label") or "Unknown"
+    counts_layer = cfg.get("counts_layer") or "counts"
+    query_label_column = query_label_column or cfg.get("query_label_column")
 
     projected_dir = out_root / cfg["projected_subdir"]
     figures_dir = out_root / cfg["figures_subdir"]
     tables_dir = out_root / cfg["tables_subdir"]
     logs_dir = out_root / cfg["logs_subdir"]
-    for d in (projected_dir, figures_dir, tables_dir, logs_dir):
+    models_dir = out_root / cfg["models_subdir"] / "scpoli_query_surgery"
+    ckpt_dir = out_root / "checkpoints"
+    converted_dir = out_root / "query_converted"
+    for d in (projected_dir, figures_dir, tables_dir, logs_dir, models_dir, ckpt_dir, converted_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    out_h5ad = projected_dir / f"{query_path.stem}_projected.h5ad"
-    meta_json = projected_dir / f".{query_path.stem}_projected.meta.json"
+    stem = query_src.stem
+    out_h5ad = projected_dir / f"{stem}_projected.h5ad"
+    meta_json = projected_dir / f".{stem}_projected.meta.json"
     _setup_logging_file(logs_dir / "projection.log")
+
+    if not atlas_path.is_file():
+        raise FileNotFoundError(f"Atlas h5ad not found: {atlas_path}")
+    validate_model_dir(model_path)
+    if not query_src.is_file():
+        raise FileNotFoundError(f"Query file not found: {query_src}")
 
     if not force and cfg.get("skip_existing") and out_h5ad.is_file() and out_h5ad.stat().st_size > 0:
         logger.info("Skipping existing projected output: %s", out_h5ad)
         return out_h5ad
 
-    logger.info("Loading atlas: %s", atlas_path)
-    reference = sc.read_h5ad(atlas_path)
-    _ensure_gene_names(reference)
-    logger.info("Atlas: %s cells x %s genes", f"{reference.n_obs:,}", f"{reference.n_vars:,}")
+    if not torch.cuda.is_available():
+        logger.warning("CUDA not available; scPoli surgery will run on CPU and may be very slow.")
 
-    logger.info("Loading query: %s", query_path)
-    query = sc.read_h5ad(query_path)
-    _ensure_gene_names(query)
-    logger.info("Query: %s cells x %s genes", f"{query.n_obs:,}", f"{query.n_vars:,}")
-
+    patch_anndata_for_scarches()
     random.seed(cfg["seed"])
     np.random.seed(cfg["seed"])
-    sc.settings.seed = cfg["seed"]
 
-    reference, query = _align_genes(reference, query)
-    _prepare_reference(reference, cfg)
-    _normalize_if_needed(query, target_sum=cfg["normalize_target_sum"])
+    logger.info("Loading query: %s", query_src)
+    converted_h5ad = converted_dir / f"{stem}_rna_counts.h5ad"
+    query_raw = load_query_adata(query_src, converted_h5ad=converted_h5ad, force=force)
+    logger.info("Query: %s cells x %s genes", f"{query_raw.n_obs:,}", f"{query_raw.n_vars:,}")
+    query_raw = ensure_sample_id(query_raw, fallback=stem, batch_key=batch_key)
+    if condition_key != batch_key and condition_key not in query_raw.obs.columns:
+        query_raw.obs[condition_key] = query_raw.obs[batch_key].astype(str)
+    query_raw.obs[condition_key] = query_raw.obs[condition_key].astype(str).astype("category")
+    if "study" not in query_raw.obs.columns:
+        query_raw.obs["study"] = stem
 
-    label_cols = _detect_label_columns(reference, label_columns)
-    if "X_umap" in query.obsm:
-        query.obsm["X_umap_query"] = np.asarray(query.obsm["X_umap"])
+    ref_genes = load_reference_genes(model_path)
+    placeholder_col = scpoli_placeholder_col(model_path)
+    query = ensure_raw_counts(query_raw, prefer_layer=counts_layer)
+    query = align_to_reference_genes(query, ref_genes)
+    query.obs[placeholder_col] = unknown_label
+    query.obs[placeholder_col] = query.obs[placeholder_col].astype("category")
+    query.obs["dataset_role"] = "query"
+    query.obs["conditions_combined"] = query.obs[condition_key].astype(str)
 
-    projected_cols: list[str] = []
-    ingested = False
-    for label_col in label_cols:
-        projected_col = f"projected_{label_col}"
-        logger.info("Projecting label column via ingest: %s -> %s", label_col, projected_col)
-        if not ingested:
-            sc.tl.ingest(query, reference, obs=label_col)
-            ingested = True
-            query.obs[projected_col] = query.obs[label_col].astype("category")
-        else:
-            qry = query.copy()
-            sc.tl.ingest(qry, reference, obs=label_col)
-            query.obs[projected_col] = qry.obs[label_col].astype("category")
-        projected_cols.append(projected_col)
-    query.uns["projection_atlas"] = str(atlas_path)
-    query.uns["projection_query"] = str(query_path)
-    query.uns["projection_label_columns"] = label_cols
+    logger.info("Loading atlas metadata: %s", atlas_path)
+    atlas_obs = load_atlas_obs(atlas_path)
+    for col in REQUIRED_ATLAS_OBS:
+        if col not in atlas_obs.columns:
+            raise KeyError(f"Atlas missing required obs column: {col!r}")
+    l3_to_l2 = majority_map(atlas_obs, celltype_key, "Level_2_Integrated")
+    l3_to_l1 = majority_map(atlas_obs, celltype_key, "Level_1_Integrated")
+    map_df = pd.DataFrame(
+        {
+            celltype_key: list(l3_to_l2.keys()),
+            "Level_2_Integrated": [l3_to_l2[k] for k in l3_to_l2],
+            "Level_1_Integrated": [l3_to_l1[k] for k in l3_to_l2],
+        }
+    ).sort_values(celltype_key)
+    map_df.to_csv(tables_dir / "atlas_Level3Integrated_to_Level2_Level1_majority_map.tsv", sep="\t", index=False)
 
-    logger.info("Saving projected query: %s", out_h5ad)
-    query.write_h5ad(out_h5ad)
+    prototype_map = Path(cfg.get("prototype_map") or packaged_prototype_map_path())
+    prototype_to_l3 = load_prototype_bridge(prototype_map, celltype_key)
+    pd.read_csv(prototype_map, sep="\t").to_csv(
+        tables_dir / "atlas_prototype_to_Level3Integrated_map.tsv", sep="\t", index=False
+    )
 
-    summary_rows: list[dict[str, Any]] = []
+    scpoli_query = load_query_model(query, model_path, unknown_label=unknown_label)
+    logger.info(
+        "Query model ready. condition_keys=%s input_dim=%s latent_dim=%s",
+        scpoli_query.condition_keys_,
+        scpoli_query.input_dim_,
+        scpoli_query.latent_dim_,
+    )
+    train_query_model(
+        scpoli_query,
+        n_epochs=int(cfg["n_epochs"]),
+        pretrain_epochs=int(cfg["pretrain_epochs"]),
+        eta=float(cfg["eta"]),
+    )
+    scpoli_query.save(str(models_dir), overwrite=True)
+    logger.info("Saved query surgery model: %s", models_dir)
+
+    scpoli_query.model.eval()
+    q_latent = np.asarray(get_latent_safe(scpoli_query, query, mean=True), dtype=np.float32)
+    query.obsm["X_scpoli"] = q_latent
+    results = classify_safe(scpoli_query, query, scale_uncertainties=True)
+    proto_key = scpoli_query.cell_type_keys_[0]
+    _assign_predicted_labels(
+        query,
+        preds_proto=results[proto_key]["preds"],
+        uncert=results[proto_key]["uncert"],
+        prototype_to_l3=prototype_to_l3,
+        l3_to_l2=l3_to_l2,
+        l3_to_l1=l3_to_l1,
+    )
+    logger.info("Level_3_pred counts:\n%s", query.obs["Level_3_pred"].value_counts().head(20).to_string())
+    logger.info("Mean Level_3_uncert: %.4f", float(np.mean(query.obs["Level_3_uncert"])))
+
+    sim_stats: dict[str, Any] = {}
     if cfg.get("save_plots", True):
-        ref_umap = np.asarray(reference.obsm["X_umap"])
-        qry_umap = np.asarray(query.obsm["X_umap"])
-
-        primary = projected_cols[0]
-        primary_ref = label_cols[0]
-        palette = _palette_for_label(primary_ref)
-
-        overlay_path = figures_dir / f"umap_overlay_{primary_ref}.png"
-        _plot_overlay(
-            ref_umap,
-            qry_umap,
-            query.obs[primary],
-            overlay_path,
-            title=f"Atlas + projected query ({primary_ref})",
-            dpi=cfg["dpi"],
-            palette=palette,
+        sim_stats = _atlas_umap_figures(
+            query=query,
+            atlas_path=atlas_path,
+            atlas_obs=atlas_obs,
+            cfg=cfg,
+            figures_dir=figures_dir,
+            tables_dir=tables_dir,
+            stem=stem,
+            batch_key=batch_key,
+            query_label_column=query_label_column,
         )
-        logger.info("Saved figure: %s", overlay_path)
 
-        query_umap_path = figures_dir / f"umap_query_{primary_ref}.png"
-        _save_umap_scatter(
-            qry_umap,
-            query.obs[primary],
-            query_umap_path,
-            title=f"Projected query ({primary_ref})",
-            dpi=cfg["dpi"],
-            palette=palette,
-            figsize=(10, 6),
+    if cfg.get("joint_umap"):
+        _maybe_joint_umap(
+            query=query,
+            model=scpoli_query,
+            atlas_path=atlas_path,
+            atlas_obs=atlas_obs,
+            ref_genes=ref_genes,
+            placeholder_col=placeholder_col,
+            condition_key=condition_key,
+            celltype_key=celltype_key,
+            unknown_label=unknown_label,
+            cfg=cfg,
+            ckpt_dir=ckpt_dir,
+            figures_dir=figures_dir,
+            stem=stem,
         )
-        logger.info("Saved figure: %s", query_umap_path)
 
-        ref_comp = _composition_table(reference.obs[primary_ref], "atlas")
-        query_comp = _composition_table(query.obs[primary], "projected_query")
-        comp_csv = tables_dir / f"composition_{primary_ref}.csv"
-        pd.concat([ref_comp, query_comp], ignore_index=True).to_csv(comp_csv, index=False)
-        comp_plot = figures_dir / f"composition_{primary_ref}.png"
-        _plot_composition(ref_comp, query_comp, comp_plot, dpi=cfg["dpi"])
-        logger.info("Saved composition plot: %s", comp_plot)
+    query.uns["projection_atlas"] = str(atlas_path)
+    query.uns["projection_query"] = str(query_src)
+    query.uns["projection_model"] = str(model_path)
+    query.uns["projection_method"] = "scpoli_surgery"
+    logger.info("Saving projected query: %s", out_h5ad)
+    query.write_h5ad(out_h5ad, compression="gzip")
+    _write_prediction_tables(query, tables_dir, stem, batch_key)
 
-        batch_key = query_batch_key if query_batch_key in query.obs.columns else None
-        if batch_key:
-            import matplotlib.pyplot as plt
-
-            cats = query.obs[batch_key].astype(str).unique().tolist()
-            n_cols = min(4, max(1, len(cats)))
-            n_rows = int(np.ceil(len(cats) / n_cols))
-            fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.5 * n_cols, 4 * n_rows))
-            axes = np.atleast_1d(axes).ravel()
-            for ax, cat in zip(axes, cats, strict=False):
-                mask = query.obs[batch_key].astype(str) == cat
-                sub = qry_umap[mask]
-                sub_lbl = query.obs[primary][mask]
-                for label in pd.Categorical(sub_lbl).categories:
-                    m = sub_lbl.astype(str) == str(label)
-                    ax.scatter(sub[m, 0], sub[m, 1], s=5, alpha=0.7, rasterized=True, label=str(label))
-                ax.set_title(f"{batch_key}={cat}")
-            for ax in axes[len(cats):]:
-                ax.axis("off")
-            fig.suptitle(f"Projected query split by {batch_key}")
-            split_path = figures_dir / f"umap_split_{batch_key}_{primary_ref}.png"
-            fig.tight_layout()
-            split_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(split_path, dpi=cfg["dpi"], bbox_inches="tight")
-            plt.close(fig)
-            logger.info("Saved split UMAP: %s", split_path)
-
-        truth_col = query_label_column
-        if truth_col and truth_col in query.obs.columns:
-            conf_path = figures_dir / f"confusion_{truth_col}_vs_{primary_ref}.png"
-            conf_df = _plot_confusion(query.obs[truth_col], query.obs[primary], conf_path, dpi=cfg["dpi"])
-            conf_csv = tables_dir / f"confusion_{truth_col}_vs_{primary_ref}.csv"
-            conf_df.to_csv(conf_csv)
-            logger.info("Saved confusion matrix: %s", conf_path)
-
-        for col, ref_col in zip(projected_cols, label_cols, strict=True):
-            summary_rows.append(
-                {
-                    "projected_column": col,
-                    "reference_column": ref_col,
-                    "n_query_cells": int(query.n_obs),
-                    "n_labels": int(query.obs[col].nunique()),
-                }
-            )
-
-    summary_df = pd.DataFrame(summary_rows or [{"projected_column": projected_cols[0], "reference_column": label_cols[0]}])
-    summary_csv = tables_dir / "projection_summary.csv"
-    summary_df.to_csv(summary_csv, index=False)
-
-    meta = {
+    summary = {
         "atlas_h5ad": str(atlas_path),
-        "query_h5ad": str(query_path),
+        "query": str(query_src),
+        "model_dir": str(model_path),
         "projected_h5ad": str(out_h5ad),
-        "label_columns": label_cols,
-        "projected_columns": projected_cols,
-        "n_shared_genes": int(reference.n_vars),
+        "n_query_cells": int(query.n_obs),
+        "n_query_genes": int(query.n_vars),
+        "n_sample_id": int(query.obs[condition_key].nunique()),
+        "celltype_key": celltype_key,
+        "label_transfer": "scpoli_prototype_classify",
+        "cuda": bool(torch.cuda.is_available()),
+        "mean_Level_3_uncert": float(np.mean(query.obs["Level_3_uncert"])),
+        "similarity": sim_stats,
     }
-    meta_json.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (tables_dir / "projection_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    meta_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     logger.info("Projection completed. Outputs under: %s", out_root)
     return out_h5ad

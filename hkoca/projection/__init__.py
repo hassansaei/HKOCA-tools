@@ -1,11 +1,10 @@
-"""Project query datasets onto a reference atlas (scanpy ingest)."""
+"""Project query datasets onto the HKOCA atlas (scPoli surgery)."""
 
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 from hkoca.projection.config import load_projection_config, packaged_config_path
 from hkoca.projection.runner import project_query
@@ -15,8 +14,9 @@ logger = logging.getLogger("hkoca.projection")
 
 def status_message() -> str:
     return (
-        "Atlas projection (scanpy ingest on hkoca_harmonize env).\n"
-        "  hkoca projection map --atlas atlas.h5ad --query query.h5ad --output-dir out/projection\n"
+        "Atlas projection (scPoli surgery on hkoca_projection env).\n"
+        "  hkoca projection map --query sct_prepared.rds --atlas atlas.h5ad "
+        "--model-dir scPoli_Reference_Model --output-dir out/projection\n"
         "  hkoca projection map --config projection.config.yaml"
     )
 
@@ -38,47 +38,50 @@ def _setup_logging(verbose: bool = False) -> None:
     logger.addHandler(handler)
 
 
-def _parse_label_columns(raw: str | None) -> list[str] | None:
-    if raw is None or not str(raw).strip():
-        return None
-    return [c.strip() for c in str(raw).replace(";", ",").split(",") if c.strip()]
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hkoca projection",
-        description="Project query h5ad onto a reference atlas and generate comparison plots",
+        description=(
+            "Project a query dataset onto the HKOCA kidney organoid atlas "
+            "with scPoli surgery and prototype label transfer"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
+            "  conda activate hkoca_projection\n"
             "  hkoca projection map \\\n"
-            "      --atlas reference/nephatlas.h5ad \\\n"
-            "      --query results/annotation/annotated_obj/sample_annotated.h5ad \\\n"
+            "      --query results/integration/prep/sct_prepared.rds \\\n"
+            "      --atlas reference/Master_Atlas_scPoli_Integrated_Reannotated_fullgenes.h5ad \\\n"
+            "      --model-dir reference/scPoli_Reference_Model \\\n"
             "      --output-dir results/projection\n"
-            "  hkoca projection map --config my_projection.yaml \\\n"
-            "      --query external_query.h5ad --output-dir results/projection \\\n"
-            "      --query-label-column celltype --force\n"
+            "  hkoca projection map --config my_projection.yaml --force\n"
         ),
     )
     sub = parser.add_subparsers(dest="cmd")
 
     p_map = sub.add_parser(
         "map",
-        help="Map query cells onto atlas labels and UMAP (scanpy ingest)",
+        help="Map query cells onto the atlas with scPoli surgery",
+    )
+    p_map.add_argument(
+        "--query",
+        "--query-h5ad",
+        dest="query_path",
+        default=None,
+        help="Query .h5ad or Seurat .rds (integration prep sct_prepared.rds uses RNA counts)",
     )
     p_map.add_argument(
         "--atlas",
         "--atlas-h5ad",
         dest="atlas_h5ad",
         default=None,
-        help="Reference atlas .h5ad (cell-type labels in obs)",
+        help="HKOCA atlas .h5ad (Level_*_Integrated labels, X_scpoli / X_umap_scpoli)",
     )
     p_map.add_argument(
-        "--query",
-        "--query-h5ad",
-        dest="query_h5ad",
+        "--model-dir",
+        dest="model_dir",
         default=None,
-        help="Query .h5ad (HKOCA pipeline or external)",
+        help="scPoli reference model directory (model_params.pt, attr.pkl, var_names.csv)",
     )
     p_map.add_argument(
         "--output-dir",
@@ -92,19 +95,37 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to projection.config.yaml",
     )
     p_map.add_argument(
-        "--label-columns",
-        default=None,
-        help="Comma-separated atlas obs columns to transfer (default: auto-detect)",
-    )
-    p_map.add_argument(
         "--query-label-column",
         default=None,
-        help="Query obs column for ground-truth comparison (confusion matrix)",
+        help="Query obs column for optional confusion-matrix comparison",
     )
     p_map.add_argument(
         "--query-batch-key",
         default=None,
-        help="Query obs column for split UMAPs (default: sample_id)",
+        help="Query obs column used as scPoli condition (default: sample_id)",
+    )
+    p_map.add_argument(
+        "--n-epochs",
+        type=int,
+        default=None,
+        help="Surgery epochs (default: 50)",
+    )
+    p_map.add_argument(
+        "--pretrain-epochs",
+        type=int,
+        default=None,
+        help="Surgery pretraining epochs (default: 40)",
+    )
+    p_map.add_argument(
+        "--eta",
+        type=float,
+        default=None,
+        help="scPoli eta (default: 10)",
+    )
+    p_map.add_argument(
+        "--joint-umap",
+        action="store_true",
+        help="Also compute exploratory joint latent UMAP (atlas subsample + query)",
     )
     p_map.add_argument(
         "--force",
@@ -151,41 +172,55 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_projection_config(args.config)
     atlas = args.atlas_h5ad or cfg.get("atlas_h5ad")
-    query = args.query_h5ad or cfg.get("query_h5ad")
+    query = args.query_path or cfg.get("query_path")
+    model_dir = args.model_dir or cfg.get("model_dir")
     output_dir = args.output_dir or cfg.get("output_dir")
+
+    if args.n_epochs is not None:
+        cfg["n_epochs"] = int(args.n_epochs)
+    if args.pretrain_epochs is not None:
+        cfg["pretrain_epochs"] = int(args.pretrain_epochs)
+    if args.eta is not None:
+        cfg["eta"] = float(args.eta)
+    if args.joint_umap:
+        cfg["joint_umap"] = True
 
     if not atlas:
         logger.error("Atlas h5ad required (--atlas or paths.atlas_h5ad in config).")
         return 1
     if not query:
-        logger.error("Query h5ad required (--query or paths.query_h5ad in config).")
+        logger.error("Query .h5ad or .rds required (--query or paths.query in config).")
+        return 1
+    if not model_dir:
+        logger.error("scPoli model dir required (--model-dir or paths.model_dir in config).")
         return 1
     if not output_dir:
         logger.error("Output directory required (-o/--output-dir or paths.output_dir in config).")
         return 1
 
-    label_columns = _parse_label_columns(args.label_columns) or cfg.get("reference_label_columns")
     query_label_column = args.query_label_column or cfg.get("query_label_column")
     query_batch_key = args.query_batch_key or cfg.get("query_batch_key") or "sample_id"
 
-    logger.info("Atlas: %s", atlas)
     logger.info("Query: %s", query)
+    logger.info("Atlas: %s", atlas)
+    logger.info("Model: %s", model_dir)
     logger.info("Output: %s", output_dir)
 
     if args.dry_run:
-        logger.info("Dry run: projection map would run with hkoca_harmonize env.")
+        logger.info("Dry run: projection map would run with hkoca_projection env (scPoli surgery).")
         return 0
 
     try:
         out_path = project_query(
             atlas_h5ad=atlas,
-            query_h5ad=query,
+            query_path=query,
+            model_dir=model_dir,
             output_dir=output_dir,
-            label_columns=label_columns,
             query_label_column=query_label_column,
             query_batch_key=query_batch_key,
             cfg=cfg,
             force=bool(args.force_overwrite),
+            joint_umap=True if args.joint_umap else None,
         )
     except Exception as exc:
         logger.error("Projection failed: %s", exc)

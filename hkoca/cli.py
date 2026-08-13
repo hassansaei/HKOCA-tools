@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
             "  qc-filter    Harmonize then doublets + QC (single command)\n"
             "  annotation   Cell-type annotation\n"
             "  integration  Batch integration (Harmony / RPCA / CCA)\n"
-            "  projection   Map query h5ad onto reference atlas\n"
+            "  projection   Map query onto the HKOCA atlas (scPoli)\n"
         ),
     )
     parser.add_argument(
@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("annotation", help="Cell-type annotation")
     sub.add_parser("integration", help="Batch integration (Harmony / RPCA / CCA)")
-    sub.add_parser("projection", help="Project query h5ad onto reference atlas")
+    sub.add_parser("projection", help="Project query onto the HKOCA atlas (scPoli surgery)")
 
     if not argv or argv[0] in ("-h", "--help", "-V", "--version"):
         parser.parse_args(argv)

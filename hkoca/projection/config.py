@@ -8,17 +8,17 @@ from typing import Any
 
 import yaml
 
-DEFAULT_LABEL_PRIORITY: tuple[str, ...] = (
-    "celltype_final",
-    "Level_3",
-    "Level_3_latest",
-    "Level_2",
-    "Level_1",
-)
-
 
 def packaged_config_path() -> Path:
     return Path(resources.files("hkoca.projection").joinpath("projection.config.yaml")).resolve()
+
+
+def packaged_prototype_map_path() -> Path:
+    return Path(
+        resources.files("hkoca.projection.data").joinpath(
+            "atlas_prototype_to_Level3Integrated_map.tsv"
+        )
+    ).resolve()
 
 
 def load_yaml(path: Path | str) -> dict[str, Any]:
@@ -62,36 +62,40 @@ def load_projection_config(
     paths = raw.get("paths") or {}
     reference = raw.get("reference") or {}
     query = raw.get("query") or {}
-    projection = raw.get("projection") or {}
+    scpoli = raw.get("scpoli") or {}
     outputs = raw.get("outputs") or {}
     plotting = raw.get("plotting") or {}
-
-    label_columns = reference.get("label_columns")
-    if isinstance(label_columns, str):
-        label_columns = [c.strip() for c in label_columns.split(",") if c.strip()]
-    elif label_columns is not None:
-        label_columns = list(label_columns)
+    prototype_map = resolve_path(reference.get("prototype_map"), base) or packaged_prototype_map_path()
 
     return {
         "config_path": str(Path(config_path).resolve()) if config_path else str(packaged_config_path()),
         "atlas_h5ad": resolve_path(paths.get("atlas_h5ad"), base),
-        "query_h5ad": resolve_path(paths.get("query_h5ad"), base),
+        "query_path": resolve_path(paths.get("query") or paths.get("query_h5ad"), base),
+        "model_dir": resolve_path(paths.get("model_dir"), base),
         "output_dir": resolve_path(paths.get("output_dir"), base) or (base / "projection_results").resolve(),
-        "reference_label_columns": label_columns,
-        "reference_batch_key": reference.get("batch_key"),
         "query_batch_key": query.get("batch_key") or "sample_id",
         "query_label_column": query.get("label_column"),
-        "normalize_target_sum": float(projection.get("normalize_target_sum") or 10000),
-        "hvg_n_top_genes": int(projection.get("hvg_n_top_genes") or 3000),
-        "pca_n_comps": int(projection.get("pca_n_comps") or 50),
-        "neighbors_n_neighbors": int(projection.get("neighbors_n_neighbors") or 20),
-        "neighbors_n_pcs": int(projection.get("neighbors_n_pcs") or 30),
-        "seed": int(projection.get("seed") or 42),
+        "counts_layer": query.get("counts_layer") or "counts",
+        "celltype_key": reference.get("celltype_key") or "Level_3_Integrated",
+        "condition_key": reference.get("condition_key") or "sample_id",
+        "unknown_label": reference.get("unknown_label") or "Unknown",
+        "atlas_umap_key": reference.get("atlas_umap_key") or "X_umap_scpoli",
+        "atlas_latent_key": reference.get("atlas_latent_key") or "X_scpoli",
+        "prototype_map": prototype_map,
+        "n_epochs": int(scpoli.get("n_epochs") or 50),
+        "pretrain_epochs": int(scpoli.get("pretrain_epochs") or 40),
+        "eta": float(scpoli.get("eta") or 10),
+        "seed": int(scpoli.get("seed") or 42),
         "projected_subdir": outputs.get("projected_subdir") or "projected_obj",
         "figures_subdir": outputs.get("figures_subdir") or "figures",
         "tables_subdir": outputs.get("tables_subdir") or "tables",
         "logs_subdir": outputs.get("logs_subdir") or "logs",
+        "models_subdir": outputs.get("models_subdir") or "models",
         "save_plots": bool(plotting.get("save_plots", True)),
         "dpi": int(plotting.get("dpi") or 150),
         "skip_existing": bool(plotting.get("skip_existing", True)),
+        "joint_umap": bool(plotting.get("joint_umap", False)),
+        "atlas_umap_subsample": int(plotting.get("atlas_umap_subsample") or 80000),
+        "knn_neighbors": int(plotting.get("knn_neighbors") or 30),
+        "atlas_bg_max": int(plotting.get("atlas_bg_max") or 120000),
     }

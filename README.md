@@ -15,7 +15,7 @@ projection onto the atlas.
 | `hkoca qc-filter` | `hkoca.qc_filter` | Harmonize (`--to-rds`) then doublet/QC |
 | `hkoca annotation` | `hkoca.annotation` | Cell-type annotation |
 | `hkoca integration` | `hkoca.integration` | Batch integration (Harmony / RPCA / CCA) |
-| `hkoca projection` | `hkoca.projection` | Map query h5ad onto reference atlas |
+| `hkoca projection` | `hkoca.projection` | Map query onto the HKOCA atlas (scPoli) |
 
 ```
 hkoca/
@@ -39,11 +39,13 @@ the QC R script. There are no separate harmonize/qc CLIs.
 conda env create -f conda/environment_harmonize.yaml
 conda env create -f conda/environment_qc.yaml
 conda env create -f conda/environment_integration.yaml
+conda env create -f conda/environment_projection.yaml
 conda activate hkoca_harmonize
 pip install -e .
 # Snapseed (annotation) is installed from https://github.com/hassansaei/snapseed
 # via environment_harmonize.yaml. To refresh only Snapseed later:
 #   pip install -U git+https://github.com/hassansaei/snapseed.git
+# Atlas projection (GPU): conda activate hkoca_projection && pip install -e .
 ```
 
 `hkoca qc-filter` runs harmonization in the active env, then automatically
@@ -173,31 +175,51 @@ written directly under the integration output root (`integration_prep.log`,
 
 ### Projection (atlas mapping)
 
-Uses the Python conda env `hkoca_harmonize` (scanpy ingest). Provide your
-reference atlas as `.h5ad`; query can be an HKOCA annotated object or any
-external dataset in the same gene space.
+Uses the dedicated GPU conda env `hkoca_projection` (PyTorch + scArches/scPoli).
+This is **not** scanpy ingest: query cells are mapped by scPoli surgery onto the
+HKOCA reference model, then labeled by prototype matching to
+`Level_3_Integrated` (rolled up to Level 2 / Level 1).
+
+Provide:
+
+- `--query` — integration prep `sct_prepared.rds` (RNA counts are exported; SCT
+  residuals are not used) or a query `.h5ad` with raw UMIs in `layers['counts']`
+  or `.X`, gene symbols in `var_names`, and `obs['sample_id']`
+- `--atlas` — HKOCA atlas `.h5ad` (`Level_*_Integrated`, `X_scpoli` /
+  `X_umap_scpoli`)
+- `--model-dir` — scPoli weights (`model_params.pt`, `attr.pkl`, `var_names.csv`)
 
 ```bash
-conda activate hkoca_harmonize
+conda env create -f conda/environment_projection.yaml
+conda activate hkoca_projection
 pip install -e .
 
 hkoca projection map \
-  --atlas reference/nephatlas.h5ad \
-  --query results/annotation/annotated_obj/sample_annotated.h5ad \
+  --query results/integration/prep/sct_prepared.rds \
+  --atlas reference/Master_Atlas_scPoli_Integrated_Reannotated_fullgenes.h5ad \
+  --model-dir reference/scPoli_Reference_Model \
   --output-dir results/projection
 ```
 
-The module auto-detects atlas label columns (`celltype_final`, `Level_3`, …),
-projects query cells with `scanpy.tl.ingest`, and writes comparison plots:
+Run surgery on a GPU node. RDS conversion uses `Rscript` from
+`hkoca_integration` (or `HKOCA_RSCRIPT`). Resume skips an existing projected
+h5ad; pass `--force` to re-run. Optional `--joint-umap` adds an exploratory
+joint latent UMAP (atlas subsample + query); default figures place the query on
+the **fixed atlas UMAP** by kNN in scPoli latent space.
 
-- `figures/umap_overlay_*.png` — atlas + projected query on reference UMAP
-- `figures/umap_query_*.png` — projected labels on query
-- `figures/composition_*.png` — atlas vs query cell-type fractions
-- `figures/umap_split_<batch>_*.png` — split by `sample_id` (or `--query-batch-key`)
-- `figures/confusion_*.png` — optional, when `--query-label-column` is set
+`Level_3_uncert` is prototype uncertainty scaled per query batch (0 = confident,
+1 = uncertain; relative, not an absolute atlas-wide score).
 
-Outputs: `projected_obj/<query>_projected.h5ad`, `tables/composition_*.csv`,
-`tables/projection_summary.csv`, `logs/projection.log`.
+Outputs:
+
+- `projected_obj/<query>_projected.h5ad` — query with `X_scpoli`,
+  `Level_3_pred` / `Level_2_pred` / `Level_1_pred`, `Level_3_uncert`
+- `tables/query_predictions_*.tsv`, `tables/projection_summary.json`
+- `figures/query_on_atlas_umap_*.png` — query on atlas UMAP (labels, similarity,
+  uncertainty)
+- `figures/composition_*.png`, optional `figures/confusion_*.png`
+- `models/scpoli_query_surgery/` — fine-tuned query embeddings
+- `logs/projection.log`
 
 Packaged defaults: `hkoca projection --print-config`.
 

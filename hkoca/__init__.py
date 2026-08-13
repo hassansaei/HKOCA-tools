@@ -7,7 +7,7 @@ cellbender   Ambient RNA removal only (CellBender)
 qc_filter    Harmonization → doublet detection → QC filtering
 annotation   Cell-type annotation
 integration  Batch integration (Harmony / RPCA / CCA)
-projection   Map query h5ad onto reference atlas
+projection   Map query onto the HKOCA atlas (scPoli surgery)
 """
 
 from hkoca._version import __version__

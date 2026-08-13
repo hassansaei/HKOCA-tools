@@ -1,0 +1,26 @@
+# GPU required for scPoli surgery. CPU is possible but very slow.
+# If pytorch-cuda fails, install PyTorch for your driver from pytorch.org, then:
+#   pip install scarches==0.6.1
+name: hkoca_projection
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.11
+  - pip
+  - anndata>=0.10,<0.13
+  - scanpy>=1.10,<1.11
+  - scipy>=1.11,<1.15
+  - numpy>=2.0,<2.3
+  - pandas>=2.2
+  - matplotlib>=3.8
+  - scikit-learn>=1.4
+  - h5py>=3.10
+  - pyyaml
+  - leidenalg>=0.10
+  - python-igraph>=0.11
+  - pytorch>=2.2
+  - pytorch-cuda=12.8
+  - pip:
+      - scarches==0.6.1
