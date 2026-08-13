@@ -19,7 +19,8 @@ HKOCA_FEATURE_COLS <- c("grey85", "black")
     if (grepl("^RNA_snn_res", col_name)) return(TRUE)
     if (grepl("^integrated\\.", col_name)) return(TRUE)
     if (grepl("^leiden_res", col_name, ignore.case = TRUE)) return(TRUE)
-    if (grepl("_res[0-9]+(\\.|_)", col_name)) return(TRUE)
+    if (grepl("^Level_", col_name)) return(TRUE)
+    if (col_name %in% c("celltype_final", "celltype")) return(TRUE)
     FALSE
 }
 
@@ -157,6 +158,39 @@ HKOCA_FEATURE_COLS <- c("grey85", "black")
     do.call(DimPlot, args)
 }
 
+.ensure_joined_normalized_rna <- function(obj) {
+    if (!"RNA" %in% Assays(obj)) return(obj)
+    assay_obj <- obj[["RNA"]]
+    if (inherits(assay_obj, "Assay5") && exists("JoinLayers", mode = "function")) {
+        obj[["RNA"]] <- JoinLayers(assay_obj)
+    }
+    has_data <- TRUE
+    if (exists("Layers", mode = "function")) {
+        ly <- tryCatch(Layers(obj[["RNA"]]), error = function(e) character(0))
+        has_data <- any(ly == "data" | startsWith(ly, "data."))
+    }
+    if (!has_data) {
+        obj <- NormalizeData(obj, assay = "RNA", verbose = FALSE)
+    }
+    obj
+}
+
+.split_rna_by_batch <- function(obj) {
+    if (!"RNA" %in% Assays(obj)) return(obj)
+    batch_col <- if ("sample_id" %in% colnames(obj@meta.data)) {
+        "sample_id"
+    } else if ("orig.ident" %in% colnames(obj@meta.data)) {
+        "orig.ident"
+    } else {
+        return(obj)
+    }
+    vals <- as.character(obj@meta.data[[batch_col]])
+    n_levels <- length(unique(vals[nzchar(vals) & !is.na(vals)]))
+    if (n_levels < 2L) return(obj)
+    obj[["RNA"]] <- split(obj[["RNA"]], f = obj@meta.data[[batch_col]])
+    obj
+}
+
 .hkoca_feature_plot <- function(obj, features, reduction, ncol) {
     FeaturePlot(
         obj,
@@ -244,6 +278,9 @@ HKOCA_FEATURE_COLS <- c("grey85", "black")
     marker_groups <- .extract_level3_marker_groups(markers_yaml_path)
     feature_outputs <- list()
     if (length(marker_groups) > 0 && feature_assay %in% Assays(obj)) {
+        if (identical(feature_assay, "RNA")) {
+            obj <- .ensure_joined_normalized_rna(obj)
+        }
         DefaultAssay(obj) <- feature_assay
         for (grp in marker_groups) {
             present <- intersect(grp$genes, rownames(obj))
@@ -254,7 +291,17 @@ HKOCA_FEATURE_COLS <- c("grey85", "black")
             safe_label <- gsub("[^A-Za-z0-9_-]", "_", grp$label)
             out_path <- file.path(out_dir, sprintf("featureplot_%s.png", safe_label))
             layout <- .feature_plot_layout(length(present))
-            fp <- .hkoca_feature_plot(obj, present, reduction, layout$ncol)
+            fp <- tryCatch(
+                .hkoca_feature_plot(obj, present, reduction, layout$ncol),
+                error = function(e) {
+                    .log_warn(
+                        "[%s] FeaturePlot failed for %s: %s",
+                        method_label, grp$label, conditionMessage(e)
+                    )
+                    NULL
+                }
+            )
+            if (is.null(fp)) next
             fp_titled <- fp + patchwork::plot_annotation(title = grp$label)
             .save_ggplot_png(out_path, fp_titled, width = layout$width, height = layout$height)
             .log_info(
@@ -264,6 +311,9 @@ HKOCA_FEATURE_COLS <- c("grey85", "black")
             feature_outputs[[grp$label]] <- list(
                 path = out_path, genes = present, ncol = layout$ncol
             )
+        }
+        if (identical(feature_assay, "RNA")) {
+            obj <- .split_rna_by_batch(obj)
         }
     }
 

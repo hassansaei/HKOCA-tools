@@ -191,14 +191,7 @@
 
     Idents(obj) <- cluster_col
     DefaultAssay(obj) <- "RNA"
-    needs_norm <- TRUE
-    if (exists("Layers", mode = "function")) {
-        layers <- tryCatch(Layers(obj[["RNA"]]), error = function(e) character(0))
-        needs_norm <- !("data" %in% layers)
-    }
-    if (needs_norm && exists("NormalizeData", mode = "function")) {
-        obj <- NormalizeData(obj, assay = "RNA", verbose = FALSE)
-    }
+    obj <- .ensure_joined_normalized_rna(obj)
 
     data_mat <- tryCatch(
         GetAssayData(obj, assay = "RNA", layer = "data"),
