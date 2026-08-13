@@ -53,6 +53,7 @@ hkoca = "hkoca.cli:main"
 
 [project.urls]
 Repository = "https://github.com/hassansaei/HKOCA-tools"
+Homepage = "https://github.com/hassansaei/HKOCA-tools"
 
 [tool.setuptools.dynamic]
 version = { attr = "hkoca._version.__version__" }
