@@ -41,3 +41,4 @@ dependencies:
       - anndata2ri==2.0
       # Forked Snapseed used by hkoca annotation (not PyPI).
       - git+https://github.com/hassansaei/snapseed.git
+      - scib

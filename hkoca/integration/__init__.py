@@ -2,7 +2,9 @@
 
 Stage 1 (``prep``): SplitObject by sample, SCTransform each sample, merge,
 PCA elbow, clustree, and silhouette-based resolution selection.
-Stage 2 (``run``): IntegrateLayers on the prep object (no second SCTransform).
+Stage 2 (``run``): IntegrateLayers on the prep object (no second SCTransform),
+then scIB metrics to rank Harmony / RPCA / CCA. Existing method RDS and
+benchmark tables are skipped unless ``--force-overwrite``.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ def status_message() -> str:
         "  Stage 1 (prep):  hkoca integration prep --input-rds filtered.rds --output-dir out/integration\n"
         "  Stage 2 (run):   hkoca integration run --prepared-rds out/integration/prep/sct_prepared.rds \\\n"
         "                       --output-dir out/integration [--harmony] [--rpca] [--cca]\n"
-        "                       (omit flags to run all three methods)"
+        "                       (omit flags to run all three methods; scIB ranks them at the end)"
     )
 
 
@@ -140,7 +142,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--force-overwrite",
         dest="force_overwrite",
         action="store_true",
-        help="Re-run even when per-method RDS already exists",
+        help="Re-run even when per-method RDS or scIB benchmark already exists",
     )
     p_run.add_argument(
         "--remove-intermediate",

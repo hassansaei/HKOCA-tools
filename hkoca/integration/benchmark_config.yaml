@@ -1,0 +1,53 @@
+# scIB evaluation for hkoca integration run (Harmony / RPCA / CCA only).
+
+metadata:
+  batch_key: sample_id
+  label_key: Level_3
+  label_key_fallbacks:
+    - Level_3_latest
+    - celltype_final
+    - Level_2
+    - Level_1
+
+integration:
+  random_state: 42
+  n_neighbors: 15
+  n_pcs: 30
+
+metrics:
+  bio_weight: 0.6
+  batch_weight: 0.4
+  bio_keys:
+    - ARI
+    - NMI
+    - ASW_celltype
+    - iso_label_F1
+    - iso_label_ASW
+    - cLISI
+  batch_keys:
+    - ASW_batch
+    - graph_connectivity
+    - iLISI
+    - kBET
+    - PCR
+  methods:
+    - unintegrated
+    - harmony
+    - rpca
+    - cca
+  embed_key: X_emb
+  cluster_key: leiden_scib
+  pcr_n_comps: 8
+  pcr_scale: true
+  lisi_k0: 90
+  lisi_subsample: 100
+  lisi_scale: true
+  output_file: scib_raw_metrics.csv
+  ranking_plot: scib_method_ranking.png
+  heatmap_plot: scib_metrics_heatmap.png
+
+reductions:
+  unintegrated: pca
+  harmony: harmony
+  rpca: integrated.rpca
+  cca: integrated.cca

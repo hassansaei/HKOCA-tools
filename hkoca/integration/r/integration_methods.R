@@ -582,6 +582,15 @@ tryCatch({
 
         .log_info("[%s] Saving integrated object: %s", method, out_rds)
         saveRDS(obj_method, out_rds)
+        bench_csv <- file.path(output_dir, "benchmark", sprintf("%s_embeddings.csv", method))
+        dir.create(dirname(bench_csv), recursive = TRUE, showWarnings = FALSE)
+        red <- switch(method, harmony = "harmony", rpca = "integrated.rpca", cca = "integrated.cca", NA_character_)
+        if (!is.na(red) && red %in% Reductions(obj_method)) {
+            emb <- as.matrix(Embeddings(obj_method, red))
+            npcs_keep <- min(30L, ncol(emb))
+            write.csv(emb[, seq_len(npcs_keep), drop = FALSE], bench_csv, row.names = TRUE)
+            .log_info("[%s] Wrote embeddings: %s", method, bench_csv)
+        }
         results[[method]] <- list(rds = out_rds, status = "done")
         .log_info("[%s] Completed.", method)
         rm(obj_method)

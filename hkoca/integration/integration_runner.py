@@ -16,12 +16,14 @@ logger = logging.getLogger("hkoca.integration")
 
 DEFAULT_INTEGRATION_ENV = "hkoca_integration"
 DEFAULT_ANNOTATION_ENV = "hkoca_harmonize"
+DEFAULT_METHODS = ("harmony", "rpca", "cca")
 
 
 def r_script_path(stage: str = "prep") -> Path:
     scripts = {
         "prep": "integration_prep.R",
         "run": "integration_methods.R",
+        "export_benchmark": "export_benchmark.R",
     }
     name = scripts.get(stage)
     if name is None:
@@ -98,6 +100,24 @@ def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
         )
 
     return env
+
+
+def parse_methods(methods: str | None) -> list[str]:
+    raw = methods or ",".join(DEFAULT_METHODS)
+    out = [m.strip().lower() for m in raw.split(",") if m.strip()]
+    return [m for m in out if m in DEFAULT_METHODS] or list(DEFAULT_METHODS)
+
+
+def method_rds_path(output_dir: str, method: str) -> Path:
+    return Path(output_dir) / "objects" / f"integrated_{method}.rds"
+
+
+def all_method_rds_exist(output_dir: str, methods: list[str]) -> bool:
+    for method in methods:
+        path = method_rds_path(output_dir, method)
+        if not path.is_file() or path.stat().st_size <= 0:
+            return False
+    return True
 
 
 def default_config_path() -> Path:
@@ -188,34 +208,125 @@ def run_methods(
     dry_run: bool = False,
     extra_args: list[str] | None = None,
 ) -> int:
+    from hkoca.integration.benchmark import benchmark_complete
+
+    methods_list = parse_methods(methods)
     if not dry_run and not os.path.isfile(prepared_rds):
         logger.error("Prepared RDS does not exist: %s", prepared_rds)
         return 1
 
-    try:
-        cmd = build_run_command(
-            prepared_rds=prepared_rds,
-            output_dir=output_dir,
-            methods=methods,
-            config=config,
-            force_overwrite=force_overwrite,
-            remove_intermediate=remove_intermediate,
-            extra_args=extra_args,
+    skip_r = (not force_overwrite) and (not dry_run) and all_method_rds_exist(output_dir, methods_list)
+    if skip_r:
+        logger.info(
+            "Skipping integration methods; existing RDS for: %s",
+            ", ".join(methods_list),
         )
+        rc = 0
+    else:
+        try:
+            cmd = build_run_command(
+                prepared_rds=prepared_rds,
+                output_dir=output_dir,
+                methods=",".join(methods_list),
+                config=config,
+                force_overwrite=force_overwrite,
+                remove_intermediate=remove_intermediate,
+                extra_args=extra_args,
+            )
+        except FileNotFoundError as exc:
+            logger.error("%s", exc)
+            return 1
+
+        logger.info("Integration methods command: %s", " ".join(cmd))
+        if dry_run:
+            return 0
+
+        os.makedirs(output_dir, exist_ok=True)
+        result = subprocess.run(cmd, check=False, env=_subprocess_env_for_rscript(cmd[0]))
+        rc = result.returncode
+        if rc != 0:
+            logger.error("Integration methods failed (exit %s).", rc)
+            return rc
+        logger.info("Integration methods completed successfully. Outputs under: %s", output_dir)
+
+    if dry_run:
+        return 0
+
+    if not all_method_rds_exist(output_dir, methods_list):
+        logger.error("Not all requested method RDS exist; skipping scIB benchmark.")
+        return 1
+
+    if not force_overwrite and benchmark_complete(output_dir):
+        logger.info("Skipping scIB benchmark; results already exist under %s/benchmark.", output_dir)
+        return 0
+
+    return run_scib_stage(
+        prepared_rds=prepared_rds,
+        output_dir=output_dir,
+        methods=methods_list,
+        force_overwrite=force_overwrite,
+    )
+
+
+def run_scib_stage(
+    *,
+    prepared_rds: str,
+    output_dir: str,
+    methods: list[str],
+    force_overwrite: bool = False,
+) -> int:
+    try:
+        rscript = find_rscript()
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         return 1
 
-    logger.info("Integration methods command: %s", " ".join(cmd))
-    if dry_run:
-        return 0
+    export_cmd = [
+        rscript,
+        str(r_script_path("export_benchmark")),
+        "--output_dir",
+        os.path.abspath(output_dir),
+        "--prepared_rds",
+        os.path.abspath(prepared_rds),
+        "--methods",
+        ",".join(methods),
+    ]
+    if force_overwrite:
+        export_cmd.append("--force_overwrite")
 
-    os.makedirs(output_dir, exist_ok=True)
-    result = subprocess.run(cmd, check=False, env=_subprocess_env_for_rscript(cmd[0]))
+    logger.info("Exporting embeddings for scIB: %s", " ".join(export_cmd))
+    result = subprocess.run(export_cmd, check=False, env=_subprocess_env_for_rscript(rscript))
     if result.returncode != 0:
-        logger.error("Integration methods failed (exit %s).", result.returncode)
+        logger.error("Benchmark embedding export failed (exit %s).", result.returncode)
         return result.returncode
-    logger.info("Integration methods completed successfully. Outputs under: %s", output_dir)
+
+    py = resolve_annotation_python() or shutil.which("python")
+    if not py:
+        logger.error("No Python interpreter found for scIB (set HKOCA_ANNOTATION_ENV).")
+        return 1
+
+    bench_cmd = [
+        py,
+        "-m",
+        "hkoca.integration.benchmark",
+        "--output-dir",
+        os.path.abspath(output_dir),
+        "--methods",
+        ",".join(methods),
+    ]
+    logger.info("Running scIB benchmark: %s", " ".join(bench_cmd))
+    env = os.environ.copy()
+    prefix = Path(py).resolve().parent.parent
+    if (prefix / "bin" / "python").is_file():
+        env = subprocess_env_for_prefix(prefix)
+    result = subprocess.run(bench_cmd, check=False, env=env)
+    if result.returncode != 0:
+        logger.error(
+            "scIB benchmark failed (exit %s). Install scib in the annotation env: pip install scib",
+            result.returncode,
+        )
+        return result.returncode
+    logger.info("scIB benchmark complete: %s/benchmark", output_dir)
     return 0
 
 

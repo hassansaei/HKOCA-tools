@@ -14,6 +14,7 @@ annotated_h5ad: null
 #   nonintegrated/     pre-integration UMAP + Level_1/2/3 proportion bars + FeaturePlots
 #   harmony/ rpca/ cca/ per-method figures
 #   objects/           integrated_*.rds
+#   benchmark/         scIB metrics for Harmony / RPCA / CCA
 #   tables/            silhouette + summary CSVs
 #   integration_prep.log / integration_methods.log at output root
 output_dir: integration_results

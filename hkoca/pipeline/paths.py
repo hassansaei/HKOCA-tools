@@ -63,6 +63,10 @@ def integration_method_rds(integration_dir: str, method: str) -> str:
     return os.path.join(integration_dir, "objects", f"integrated_{method}.rds")
 
 
+def integration_benchmark_csv(integration_dir: str) -> str:
+    return os.path.join(integration_dir, "benchmark", "scib_raw_metrics.csv")
+
+
 def collect_study_artifacts(cfg: PipelineConfig, df) -> list[dict[str, str]]:
     from hkoca.pipeline.checkpoints import _study_names
 
