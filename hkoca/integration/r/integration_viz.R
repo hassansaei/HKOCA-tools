@@ -1,7 +1,7 @@
 # Shared integration figure helpers (UMAP, FeaturePlot, silhouette selection).
 
 HKOCA_PLOT_DPI <- 300L
-HKOCA_UMAP_PT_SIZE <- 0.15
+HKOCA_UMAP_PT_SIZE <- 0.4
 HKOCA_UMAP_ALPHA <- 0.85
 HKOCA_FEATURE_PT_SIZE <- 0.25
 HKOCA_FEATURE_COLS <- c("grey85", "black")
