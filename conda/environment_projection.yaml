@@ -1,11 +1,11 @@
 # GPU required for scPoli surgery. CPU is possible but very slow.
-# If pytorch-cuda fails, install PyTorch for your driver from pytorch.org, then:
-#   pip install scarches==0.6.1
+# pytorch-cuda 12.4 is the newest metapackage on the pytorch conda channel
+# (12.8 is not published). It runs on newer host NVIDIA drivers.
 name: hkoca_projection
 channels:
-  - conda-forge
   - pytorch
   - nvidia
+  - conda-forge
 dependencies:
   - python=3.11
   - pip
@@ -21,6 +21,6 @@ dependencies:
   - leidenalg>=0.10
   - python-igraph>=0.11
   - pytorch>=2.2
-  - pytorch-cuda=12.8
+  - pytorch-cuda=12.4
   - pip:
       - scarches==0.6.1
