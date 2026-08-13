@@ -3,9 +3,12 @@
 Chains stage modules in order:
 
     cellbender (optional) -> qc_filter -> annotation -> integration
+    -> projection (optional, GPU)
 
-Atlas projection is a separate module (`hkoca projection map`) and is not
-part of this pipeline.
+Projection is off by default. Pass ``--run-projection`` (or set
+``run_projection = true`` in pipeline.config) on a GPU node with
+``hkoca_projection`` installed. Atlas h5ad and scPoli ``--model-dir``
+are required when projection is enabled.
 
 The sample_info CSV drives CellBender sample selection and harmonization
 metadata. Use ``--skip-cellbender`` or per-row ``run_cellbender=False`` to
@@ -23,6 +26,8 @@ Stage I/O (per study):
                  integration/{harmony,rpca,cca}/*.png
                  integration/objects/integrated_{method}.rds
                  (multi-study: integration/{study}/...)
+  projection  -> projection/projected_obj/sct_prepared_projected.h5ad
+                 (multi-study: projection/{study}/...)
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ STAGES = (
     "qc_filter",
     "annotation",
     "integration",
+    "projection",
 )
 
 logger = logging.getLogger("hkoca.pipeline")
@@ -88,15 +94,19 @@ def _build_parser() -> argparse.ArgumentParser:
             "  Finished stage outputs under --output are skipped.\n"
             "  Use --force to re-run everything.\n"
             "\n"
-            "stages (wired end-to-end through integration):\n"
+            "stages (default stops at integration; projection is optional GPU):\n"
             "  cellbender -> qc_filter -> annotation -> integration\n"
-            "  projection is separate: hkoca projection map\n"
+            "  add projection with --run-projection --atlas ATLAS.h5ad --model-dir MODEL_DIR\n"
             "\n"
             "example:\n"
             "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out\n"
             "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out \\\n"
             "    --skip-cellbender --to-stage qc_filter\n"
             "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out --force\n"
+            "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out \\\n"
+            "    --run-projection --atlas atlas.h5ad --model-dir scPoli_Reference_Model\n"
+            "  hkoca pipeline --csv sample_info.csv --gtf genes.gtf --output /data/out \\\n"
+            "    --from-stage projection --atlas atlas.h5ad --model-dir scPoli_Reference_Model\n"
         ),
     )
     parser.add_argument(
@@ -146,7 +156,25 @@ def _build_parser() -> argparse.ArgumentParser:
         "--to-stage",
         choices=STAGES,
         default=None,
-        help="Last stage to run (default: integration)",
+        help="Last stage to run (default: integration; projection is opt-in)",
+    )
+    parser.add_argument(
+        "--run-projection",
+        action="store_true",
+        help="Include the optional GPU projection stage after integration",
+    )
+    parser.add_argument(
+        "--atlas",
+        "--atlas-h5ad",
+        dest="atlas_h5ad",
+        default=None,
+        help="HKOCA atlas .h5ad (required with --run-projection / --to-stage projection)",
+    )
+    parser.add_argument(
+        "--model-dir",
+        dest="model_dir",
+        default=None,
+        help="scPoli reference model directory (required with projection)",
     )
     parser.add_argument(
         "--qc-output",
@@ -219,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
             cellbender_mode=args.cellbender_mode,
             from_stage=from_stage,
             to_stage=args.to_stage,
+            run_projection=True if args.run_projection else None,
+            projection_atlas_h5ad=args.atlas_h5ad,
+            projection_model_dir=args.model_dir,
             qc_output=args.qc_output,
         )
         validate_config(cfg)

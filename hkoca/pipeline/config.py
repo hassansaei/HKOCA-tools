@@ -11,7 +11,14 @@ from typing import Any, Literal
 
 CONFIG_FILENAME = "pipeline.config"
 
-PipelineStage = Literal["cellbender", "qc_filter", "annotation", "integration"]
+PipelineStage = Literal["cellbender", "qc_filter", "annotation", "integration", "projection"]
+STAGE_ORDER: tuple[PipelineStage, ...] = (
+    "cellbender",
+    "qc_filter",
+    "annotation",
+    "integration",
+    "projection",
+)
 CellBenderMode = Literal["h5", "mtx"]
 
 PIPELINE_ONLY_COLS = {"sample_dir", "run_cellbender", "cellbender_mode"}
@@ -40,6 +47,11 @@ class PipelineConfig:
     integration_output_subdir: str
     integration_config: str
     integration_methods: str
+    run_projection: bool
+    projection_atlas_h5ad: str
+    projection_model_dir: str
+    projection_output_subdir: str
+    projection_config: str
     config_path: str
 
 
@@ -101,6 +113,9 @@ def resolve_config(
     cellbender_mode: str | None = None,
     from_stage: str | None = None,
     to_stage: str | None = None,
+    run_projection: bool | None = None,
+    projection_atlas_h5ad: str | None = None,
+    projection_model_dir: str | None = None,
     cellbender_config: str | None = None,
     harmonize_config: str | None = None,
     transgenes: str | None = None,
@@ -133,13 +148,25 @@ def resolve_config(
 
     from_st = (from_stage or _get(cfg, "stages", "from_stage", "cellbender") or "cellbender").lower()
     to_st = (to_stage or _get(cfg, "stages", "to_stage", "integration") or "integration").lower()
+    if from_st not in STAGE_ORDER or to_st not in STAGE_ORDER:
+        raise ValueError(
+            f"Invalid stage (from={from_st}, to={to_st}). Choose from: {', '.join(STAGE_ORDER)}"
+        )
 
     run_cb = _as_bool(_get(cfg, "stages", "run_cellbender", "true"), True)
     if run_cellbender is not None:
         run_cb = run_cellbender
 
+    run_proj = _as_bool(_get(cfg, "stages", "run_projection", "false"), False)
+    if run_projection is not None:
+        run_proj = run_projection
+
     if not run_cb and from_st == "cellbender":
         from_st = "qc_filter"
+    if from_st == "projection" and to_st == "integration":
+        to_st = "projection"
+    elif run_proj and to_st == "integration":
+        to_st = "projection"
 
     return PipelineConfig(
         working_dir=wd,
@@ -163,6 +190,11 @@ def resolve_config(
         integration_output_subdir=_get(cfg, "integration", "output_subdir", "integration"),
         integration_config=path_val(None, "integration", "config"),
         integration_methods=_get(cfg, "integration", "methods", "harmony,rpca,cca") or "harmony,rpca,cca",
+        run_projection=run_proj,
+        projection_atlas_h5ad=abs_path(path_val(projection_atlas_h5ad, "projection", "atlas_h5ad")),
+        projection_model_dir=abs_path(path_val(projection_model_dir, "projection", "model_dir")),
+        projection_output_subdir=_get(cfg, "projection", "output_subdir", "projection") or "projection",
+        projection_config=path_val(None, "projection", "config"),
         config_path=config_path,
     )
 
@@ -181,6 +213,20 @@ def validate_config(cfg: PipelineConfig) -> None:
         raise FileNotFoundError(f"Sample info CSV not found: {cfg.sample_info_csv}")
     if not os.path.isfile(cfg.gtf_file):
         raise FileNotFoundError(f"GTF file not found: {cfg.gtf_file}")
+    planned = stages_in_range(cfg.from_stage, cfg.to_stage)
+    if "projection" in planned:
+        if not cfg.projection_atlas_h5ad:
+            raise ValueError(
+                "Projection requires an atlas h5ad (--atlas or [projection] atlas_h5ad)."
+            )
+        if not cfg.projection_model_dir:
+            raise ValueError(
+                "Projection requires a scPoli model dir (--model-dir or [projection] model_dir)."
+            )
+        if not os.path.isfile(cfg.projection_atlas_h5ad):
+            raise FileNotFoundError(f"Atlas h5ad not found: {cfg.projection_atlas_h5ad}")
+        if not os.path.isdir(cfg.projection_model_dir):
+            raise FileNotFoundError(f"scPoli model dir not found: {cfg.projection_model_dir}")
 
 
 def load_sample_info(csv_path: str) -> Any:
@@ -270,9 +316,8 @@ def qc_output_dir(cfg: PipelineConfig) -> str:
 
 
 def stages_in_range(from_stage: PipelineStage, to_stage: PipelineStage) -> tuple[PipelineStage, ...]:
-    order = ("cellbender", "qc_filter", "annotation", "integration")
-    start = order.index(from_stage)
-    end = order.index(to_stage)
+    start = STAGE_ORDER.index(from_stage)
+    end = STAGE_ORDER.index(to_stage)
     if start > end:
         raise ValueError(f"from_stage ({from_stage}) must come before to_stage ({to_stage})")
-    return order[start : end + 1]
+    return STAGE_ORDER[start : end + 1]

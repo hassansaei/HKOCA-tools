@@ -13,6 +13,8 @@ from hkoca.pipeline.paths import (
     integration_benchmark_csv,
     integration_method_rds,
     integration_prepared_rds,
+    projection_output_dir,
+    projection_projected_h5ad,
 )
 
 
@@ -177,3 +179,17 @@ def integration_stage_complete(
     if missing:
         return False, missing[0]
     return True, "integration outputs present"
+
+
+def projection_stage_complete(cfg: PipelineConfig, df) -> tuple[bool, str]:
+    studies = _study_names(df)
+    n_studies = len(studies)
+    missing: list[str] = []
+    for study in studies:
+        proj_dir = projection_output_dir(cfg, study, n_studies=n_studies)
+        path = projection_projected_h5ad(proj_dir)
+        if not _nonempty_file(path):
+            missing.append(path)
+    if missing:
+        return False, missing[0]
+    return True, "projection outputs present"

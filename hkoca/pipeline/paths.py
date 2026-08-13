@@ -32,6 +32,21 @@ def integration_output_dir(cfg: PipelineConfig, study: str, *, n_studies: int) -
     return os.path.join(base, study)
 
 
+def projection_base_dir(cfg: PipelineConfig) -> str:
+    return os.path.join(cfg.output_root, cfg.projection_output_subdir)
+
+
+def projection_output_dir(cfg: PipelineConfig, study: str, *, n_studies: int) -> str:
+    base = projection_base_dir(cfg)
+    if n_studies <= 1:
+        return base
+    return os.path.join(base, study)
+
+
+def projection_projected_h5ad(projection_dir: str, query_stem: str = "sct_prepared") -> str:
+    return os.path.join(projection_dir, "projected_obj", f"{query_stem}_projected.h5ad")
+
+
 def qc_h5ad_dir(qc_output: str) -> str:
     return os.path.join(qc_output, "h5ad_converted")
 
@@ -96,6 +111,31 @@ def collect_study_artifacts(cfg: PipelineConfig, df) -> list[dict[str, str]]:
                 "annotated_h5ad": annotated_h5ad,
                 "annotation_root": ann_root,
                 "integration_dir": integration_output_dir(cfg, study, n_studies=n_studies),
+                "projection_dir": projection_output_dir(cfg, study, n_studies=n_studies),
+            }
+        )
+    return rows
+
+
+def collect_projection_artifacts(cfg: PipelineConfig, df) -> list[dict[str, str]]:
+    from hkoca.pipeline.checkpoints import _study_names
+
+    studies = _study_names(df)
+    n_studies = len(studies)
+    rows: list[dict[str, str]] = []
+    for study in studies:
+        int_dir = integration_output_dir(cfg, study, n_studies=n_studies)
+        query_rds = integration_prepared_rds(int_dir)
+        if not _nonempty_file(query_rds):
+            raise FileNotFoundError(
+                f"Missing integration prep RDS for study '{study}': {query_rds}. "
+                "Run integration first, or pass --from-stage integration."
+            )
+        rows.append(
+            {
+                "study": study,
+                "integration_dir": int_dir,
+                "projection_dir": projection_output_dir(cfg, study, n_studies=n_studies),
             }
         )
     return rows

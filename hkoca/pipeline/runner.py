@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+
+from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
 
 from hkoca.pipeline.checkpoints import (
     annotation_complete,
@@ -12,6 +15,7 @@ from hkoca.pipeline.checkpoints import (
     integration_prep_complete,
     integration_run_complete,
     integration_stage_complete,
+    projection_stage_complete,
     qc_stage_complete,
 )
 from hkoca.pipeline.config import (
@@ -26,9 +30,11 @@ from hkoca.pipeline.config import (
 from hkoca.pipeline.paths import (
     annotation_output_dir,
     collect_study_artifacts,
+    collect_projection_artifacts,
     discover_study_qc_filtered_h5ad,
     expected_annotated_h5ad,
     integration_prepared_rds,
+    projection_projected_h5ad,
     qc_h5ad_dir,
 )
 
@@ -330,6 +336,121 @@ def run_integration_stage(
     return 0
 
 
+DEFAULT_PROJECTION_ENV = "hkoca_projection"
+
+
+def _projection_python() -> tuple[str, dict[str, str]]:
+    env_name = os.environ.get("HKOCA_PROJECTION_ENV", DEFAULT_PROJECTION_ENV).strip() or DEFAULT_PROJECTION_ENV
+    prefix = resolve_env_prefix(env_name, "python")
+    if prefix is None:
+        raise FileNotFoundError(
+            f"Projection conda env '{env_name}' not found. Create it from "
+            "conda/environment_projection.yaml, pip install -e ., and run on a GPU node. "
+            "Override with HKOCA_PROJECTION_ENV."
+        )
+    python = prefix / "bin" / "python"
+    logger.info("Using projection conda env: %s", prefix)
+    return str(python), subprocess_env_for_prefix(prefix)
+
+
+def run_projection_stage(
+    cfg: PipelineConfig,
+    df,
+    *,
+    dry_run: bool = False,
+    resume: bool = True,
+    force: bool = False,
+    verbose: bool = False,
+) -> int:
+    if resume and not force:
+        ok, reason = projection_stage_complete(cfg, df)
+        if ok:
+            logger.info("Projection stage already complete (%s); skipping.", reason)
+            return 0
+        logger.info("Projection resume: %s", reason)
+
+    try:
+        artifacts = collect_projection_artifacts(cfg, df)
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        return 1
+
+    python = "python"
+    env = os.environ.copy()
+    if not dry_run:
+        try:
+            python, env = _projection_python()
+        except FileNotFoundError as exc:
+            logger.error("%s", exc)
+            return 1
+
+    for row in artifacts:
+        study = row["study"]
+        query_rds = integration_prepared_rds(row["integration_dir"])
+        proj_dir = row["projection_dir"]
+        out_h5ad = projection_projected_h5ad(proj_dir)
+
+        if not os.path.isfile(query_rds) or os.path.getsize(query_rds) == 0:
+            logger.error(
+                "Missing integration prep RDS for study '%s': %s. Run integration first.",
+                study,
+                query_rds,
+            )
+            return 1
+
+        logger.info("Projection study: %s", study)
+        logger.info("  query RDS  : %s", query_rds)
+        logger.info("  atlas      : %s", cfg.projection_atlas_h5ad)
+        logger.info("  model dir  : %s", cfg.projection_model_dir)
+        logger.info("  output dir : %s", proj_dir)
+
+        argv = [
+            python,
+            "-m",
+            "hkoca.cli",
+            "projection",
+            "map",
+            "--query",
+            query_rds,
+            "--atlas",
+            cfg.projection_atlas_h5ad,
+            "--model-dir",
+            cfg.projection_model_dir,
+            "--output-dir",
+            proj_dir,
+        ]
+        if cfg.projection_config:
+            argv.extend(["--config", cfg.projection_config])
+        if force:
+            argv.append("--force")
+        if verbose:
+            argv.append("-v")
+
+        if dry_run:
+            logger.info("[dry-run] would run: %s", " ".join(argv))
+            continue
+
+        if resume and not force and os.path.isfile(out_h5ad) and os.path.getsize(out_h5ad) > 0:
+            logger.info("Projected h5ad already present for %s; skipping.", study)
+            continue
+
+        logger.info("Projection argv: %s", " ".join(argv))
+        proc = subprocess.run(argv, check=False, env=env)
+        if proc.returncode != 0:
+            logger.error("Projection failed for study '%s' (exit %s).", study, proc.returncode)
+            return int(proc.returncode)
+
+    if dry_run:
+        return 0
+
+    ok, reason = projection_stage_complete(cfg, df)
+    if not ok:
+        logger.error("Projection stage finished but outputs are incomplete: %s", reason)
+        return 1
+    logger.info("Projection stage completed successfully.")
+    return 0
+
+
 def run_pipeline(
     cfg: PipelineConfig,
     *,
@@ -343,9 +464,8 @@ def run_pipeline(
     logger.info("Sample info CSV: %s", cfg.sample_info_csv)
     logger.info("Output root: %s", cfg.output_root)
     logger.info("Resume: %s | force: %s", resume and not force, force)
-    logger.info(
-        "Projection is a separate module; run `hkoca projection map` after integration."
-    )
+    if "projection" not in stages:
+        logger.info("Projection skipped (optional GPU stage). Pass --run-projection to include it.")
 
     df = load_sample_info(cfg.sample_info_csv)
     work_dir = os.path.join(cfg.output_root, ".hkoca")
@@ -434,6 +554,20 @@ def run_pipeline(
             )
             if rc != 0:
                 logger.error("Integration stage failed; stopping pipeline.")
+                return rc
+            continue
+
+        if stage == "projection":
+            rc = run_projection_stage(
+                cfg,
+                df,
+                dry_run=dry_run,
+                resume=resume,
+                force=force,
+                verbose=verbose,
+            )
+            if rc != 0:
+                logger.error("Projection stage failed; stopping pipeline.")
                 return rc
             continue
 

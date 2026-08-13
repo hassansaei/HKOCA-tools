@@ -64,7 +64,8 @@ hkoca cellbender h5 --help
 ### Full pipeline
 
 ```bash
-# CellBender -> harmonize/QC -> annotation -> integration (projection is separate)
+# CellBender -> harmonize/QC -> annotation -> integration
+# Optional GPU projection: add --run-projection --atlas ... --model-dir ...
 hkoca pipeline \
   --csv sample_info.csv \
   --gtf genes.gtf \
@@ -91,6 +92,24 @@ hkoca pipeline \
   --gtf genes.gtf \
   --output /data/out \
   --to-stage qc_filter
+
+# Optional GPU projection after integration (hkoca_projection env)
+hkoca pipeline \
+  --csv sample_info.csv \
+  --gtf genes.gtf \
+  --output /data/out \
+  --run-projection \
+  --atlas reference/Master_Atlas_scPoli_Integrated_Reannotated_fullgenes.h5ad \
+  --model-dir reference/scPoli_Reference_Model
+
+# Projection only, when integration already finished
+hkoca pipeline \
+  --csv sample_info.csv \
+  --gtf genes.gtf \
+  --output /data/out \
+  --from-stage projection \
+  --atlas reference/Master_Atlas_scPoli_Integrated_Reannotated_fullgenes.h5ad \
+  --model-dir reference/scPoli_Reference_Model
 ```
 
 The **sample_info CSV** uses the same columns as harmonize metadata, plus optional
@@ -110,9 +129,12 @@ Outputs are written under `--output`:
   Prep diagnostics: `{output}/integration/prep/*.png`
   Non-integrated UMAPs: `{output}/integration/nonintegrated/*.png`
   Method UMAPs: `{output}/integration/{harmony,rpca,cca}/*.png`
+- Projection (only with `--run-projection`): `{output}/projection/`
+  (`projected_obj/sct_prepared_projected.h5ad`, figures, tables)
 
-Projection onto the atlas is **not** part of `hkoca pipeline`; run
-`hkoca projection map` separately after integration or annotation.
+Default `hkoca pipeline` stops at **integration**. Projection needs a GPU
+node and the `hkoca_projection` conda env (`pip install -e .` in that env).
+You can still run `hkoca projection map` on its own.
 
 ### Annotation (Snapseed)
 
