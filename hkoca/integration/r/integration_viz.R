@@ -29,7 +29,8 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     preferred <- c(
         "sample_id", "model", "sort_podxl", "study", "source",
         "diff_protocol", "sc_protocol", "sequencing", "genome_build",
-        "Age", "type", "transduction", "MOI", "AAV"
+        "Age", "type", "transduction", "MOI", "AAV",
+        "condition", "genotype", "reporter", "transgene_status"
     )
     is_categorical <- vapply(names(meta), function(col_name) {
         col <- meta[[col_name]]
@@ -274,8 +275,8 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     unique(found[!is.na(found)])
 }
 
-.assay_matrix <- function(obj, assay = DefaultAssay(obj)) {
-    for (layer in c("data", "counts")) {
+.assay_matrix <- function(obj, assay = DefaultAssay(obj), layers = c("counts", "data")) {
+    for (layer in layers) {
         mat <- tryCatch(
             GetAssayData(obj, assay = assay, layer = layer),
             error = function(e) tryCatch(
@@ -286,6 +287,24 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
         if (!is.null(mat) && nrow(mat) > 0) return(mat)
     }
     NULL
+}
+
+.prepare_rna_for_split_feature_plot <- function(obj, split_col) {
+    if (!"RNA" %in% Assays(obj)) return(obj)
+    obj <- .ensure_joined_normalized_rna(obj)
+    if (!split_col %in% colnames(obj@meta.data)) return(obj)
+    if (length(.categorical_levels(obj@meta.data[[split_col]])) < 2L) return(obj)
+    DefaultAssay(obj) <- "RNA"
+    if (exists("split", mode = "function")) {
+        obj[["RNA"]] <- tryCatch(
+            split(obj[["RNA"]], f = obj@meta.data[[split_col]]),
+            error = function(e) {
+                .log_warn("Could not split RNA by '%s': %s", split_col, conditionMessage(e))
+                obj[["RNA"]]
+            }
+        )
+    }
+    obj
 }
 
 .features_with_expression <- function(obj, features) {
@@ -327,15 +346,25 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
 
 .save_split_feature_plots <- function(obj, features, reduction, out_dir, split_cols,
                                         label, method_label) {
-    if (!length(features) || !length(split_cols)) return(list())
+    if (!length(features)) return(list())
+    if (!length(split_cols)) {
+        .log_info(
+            "[%s] Split FeaturePlot skipped for %s: no metadata column with 2-24 levels.",
+            method_label, label
+        )
+        return(list())
+    }
     saved <- list()
     for (col_name in split_cols) {
         levels_n <- length(.categorical_levels(obj@meta.data[[col_name]]))
         if (levels_n < 2L) next
         layout <- .split_plot_layout(levels_n)
+        obj_split <- .prepare_rna_for_split_feature_plot(obj, col_name)
         panels <- lapply(features, function(g) {
             tryCatch(
-                .hkoca_feature_plot(obj, g, reduction, layout$num_columns, split.by = col_name),
+                .hkoca_feature_plot(
+                    obj_split, g, reduction, layout$num_columns, split.by = col_name
+                ),
                 error = function(e) {
                     .log_warn(
                         "[%s] Split FeaturePlot failed for %s / %s: %s",
@@ -534,7 +563,15 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
                 obj, transgene_feats, reduction, out_dir, split_cols,
                 "transgenes", method_label
             )
-            if (length(split_fp)) feature_outputs[["transgenes_split"]] <- split_fp
+            if (length(split_fp)) {
+                feature_outputs[["transgenes_split"]] <- split_fp
+            } else {
+                .log_warn(
+                    "[%s] No split transgene FeaturePlots saved (columns tried: %s).",
+                    method_label,
+                    if (length(split_cols)) paste(split_cols, collapse = ", ") else "(none)"
+                )
+            }
         } else if (length(transgene_names)) {
             .log_info(
                 "[%s] FeaturePlot: no transgene expression in object (looked for: %s)",
