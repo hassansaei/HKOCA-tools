@@ -43,6 +43,22 @@ def benchmark_complete(output_dir: str | Path, cfg: dict[str, Any] | None = None
     return path.is_file() and path.stat().st_size > 0
 
 
+def scib_available() -> bool:
+    """Return True when scanpy and scib can be imported in this interpreter."""
+    try:
+        import scanpy  # noqa: F401
+        import scib  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def scib_install_hint(env_name: str = "hkoca_harmonize") -> str:
+    return (
+        f"Install scIB in the annotation env: conda activate {env_name} && pip install scib "
+        f"(or recreate from conda/environment_harmonize.yaml)"
+    )
+
 def _resolve_label_key(obs: pd.DataFrame, cfg: dict[str, Any]) -> str:
     meta = cfg.get("metadata") or {}
     preferred = str(meta.get("label_key") or "Level_3")
@@ -128,8 +144,8 @@ def run_scib_benchmark(
         import scib
     except ImportError as exc:
         raise ImportError(
-            "scIB benchmark requires scanpy and scib. Install in the annotation env: "
-            "pip install scib   (or update conda/environment_harmonize.yaml)"
+            "scIB benchmark requires scanpy and scib. "
+            + scib_install_hint()
         ) from exc
 
     cfg = load_benchmark_config(config_path)

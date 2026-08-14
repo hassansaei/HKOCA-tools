@@ -10,7 +10,6 @@ from hkoca.pipeline.paths import (
     annotation_output_dir,
     discover_study_qc_filtered_h5ad,
     expected_annotated_h5ad,
-    integration_benchmark_csv,
     integration_method_rds,
     integration_prepared_rds,
     projection_output_dir,
@@ -149,9 +148,6 @@ def integration_run_complete(integration_dir: str, methods: str) -> tuple[bool, 
         path = integration_method_rds(integration_dir, method)
         if not _nonempty_file(path):
             missing.append(path)
-    bench = integration_benchmark_csv(integration_dir)
-    if not _nonempty_file(bench):
-        missing.append(bench)
     return (len(missing) == 0, missing)
 
 

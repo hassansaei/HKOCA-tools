@@ -3,8 +3,9 @@
 Stage 1 (``prep``): SplitObject by sample, SCTransform each sample, merge,
 PCA elbow, clustree, and silhouette-based resolution selection.
 Stage 2 (``run``): IntegrateLayers on the prep object (no second SCTransform),
-then scIB metrics to rank Harmony / RPCA / CCA. Existing method RDS and
-benchmark tables are skipped unless ``--force-overwrite``.
+then scIB metrics to rank Harmony / RPCA / CCA (optional; skipped when scib is
+not installed). Existing method RDS and benchmark tables are skipped unless
+``--force-overwrite``.
 """
 
 from __future__ import annotations

@@ -259,11 +259,41 @@ def run_scib_stage(
     methods: list[str],
     force_overwrite: bool = False,
 ) -> int:
+    from hkoca.integration.benchmark import scib_install_hint
+
     try:
         rscript = find_rscript()
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         return 1
+
+    py = resolve_annotation_python() or shutil.which("python")
+    if not py:
+        logger.warning(
+            "No Python interpreter found for scIB benchmark; skipping. "
+            "Set HKOCA_ANNOTATION_ENV to enable benchmark metrics."
+        )
+        return 0
+
+    env = os.environ.copy()
+    prefix = Path(py).resolve().parent.parent
+    if (prefix / "bin" / "python").is_file():
+        env = subprocess_env_for_prefix(prefix)
+
+    probe = subprocess.run(
+        [py, "-c", "import scanpy, scib"],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode != 0:
+        env_name = os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV).strip() or DEFAULT_ANNOTATION_ENV
+        logger.warning(
+            "Skipping optional scIB benchmark (%s). Integration RDS outputs are unchanged.",
+            scib_install_hint(env_name),
+        )
+        return 0
 
     export_cmd = [
         rscript,
@@ -284,11 +314,6 @@ def run_scib_stage(
         logger.error("Benchmark embedding export failed (exit %s).", result.returncode)
         return result.returncode
 
-    py = resolve_annotation_python() or shutil.which("python")
-    if not py:
-        logger.error("No Python interpreter found for scIB (set HKOCA_ANNOTATION_ENV).")
-        return 1
-
     bench_cmd = [
         py,
         "-m",
@@ -299,17 +324,17 @@ def run_scib_stage(
         ",".join(methods),
     ]
     logger.info("Running scIB benchmark: %s", " ".join(bench_cmd))
-    env = os.environ.copy()
-    prefix = Path(py).resolve().parent.parent
-    if (prefix / "bin" / "python").is_file():
-        env = subprocess_env_for_prefix(prefix)
     result = subprocess.run(bench_cmd, check=False, env=env)
     if result.returncode != 0:
-        logger.error(
-            "scIB benchmark failed (exit %s). Install scib in the annotation env: pip install scib",
+        logger.warning(
+            "Optional scIB benchmark failed (exit %s). Integration RDS outputs are unchanged. %s",
             result.returncode,
+            scib_install_hint(
+                os.environ.get("HKOCA_ANNOTATION_ENV", DEFAULT_ANNOTATION_ENV).strip()
+                or DEFAULT_ANNOTATION_ENV
+            ),
         )
-        return result.returncode
+        return 0
     logger.info("scIB benchmark complete: %s/benchmark", output_dir)
     return 0
 
