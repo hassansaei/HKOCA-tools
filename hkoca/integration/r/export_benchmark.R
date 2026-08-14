@@ -62,6 +62,17 @@
     .log_info("Wrote cell metadata: %s (columns: %s).", out_csv, paste(keep, collapse = ", "))
 }
 
+.metadata_has_labels <- function(meta_csv) {
+    if (!file.exists(meta_csv) || file.info(meta_csv)$size <= 0) return(FALSE)
+    meta <- tryCatch(
+        read.csv(meta_csv, row.names = 1, check.names = FALSE, nrows = 1),
+        error = function(e) NULL
+    )
+    if (is.null(meta)) return(FALSE)
+    label_cols <- c("Level_3", "Level_3_latest", "celltype_final", "Level_2", "Level_1")
+    any(label_cols %in% colnames(meta))
+}
+
 tryCatch({
     suppressPackageStartupMessages(library(Seurat))
     cli <- .parse_cli_args(commandArgs(trailingOnly = TRUE))
@@ -81,7 +92,8 @@ tryCatch({
     unint_csv <- file.path(bench_dir, "unintegrated_embeddings.csv")
 
     if (!is.na(prepared_rds) && nzchar(prepared_rds) && file.exists(prepared_rds)) {
-        need_meta <- force_flag || !file.exists(meta_csv) || file.info(meta_csv)$size <= 0
+        need_meta <- force_flag || !file.exists(meta_csv) || file.info(meta_csv)$size <= 0 ||
+            !.metadata_has_labels(meta_csv)
         need_pca <- force_flag || !file.exists(unint_csv) || file.info(unint_csv)$size <= 0
         if (need_meta || need_pca) {
             .log_info("Loading prepared RDS for unintegrated PCA / metadata.")

@@ -59,7 +59,7 @@ def scib_install_hint(env_name: str = "hkoca_harmonize") -> str:
         f"(or recreate from conda/environment_harmonize.yaml)"
     )
 
-def _resolve_label_key(obs: pd.DataFrame, cfg: dict[str, Any]) -> str:
+def _resolve_label_key(obs: pd.DataFrame, cfg: dict[str, Any]) -> str | None:
     meta = cfg.get("metadata") or {}
     preferred = str(meta.get("label_key") or "Level_3")
     fallbacks = [preferred, *list(meta.get("label_key_fallbacks") or [])]
@@ -68,11 +68,29 @@ def _resolve_label_key(obs: pd.DataFrame, cfg: dict[str, Any]) -> str:
             n = obs[key].astype(str).replace({"": np.nan, "nan": np.nan, "None": np.nan}).notna().sum()
             if n > 0:
                 return key
-    raise ValueError(
-        "No cell-type label column found for scIB. Expected Level_3 (from --annotated-h5ad) "
-        f"in {list(obs.columns)}."
-    )
+    return None
 
+
+def benchmark_metadata_ready(
+    output_dir: str | Path,
+    *,
+    config_path: str | Path | None = None,
+) -> tuple[bool, str]:
+    """Return whether cell_metadata.csv has labels required for scIB."""
+    cfg = load_benchmark_config(config_path)
+    bench = benchmark_dir(output_dir)
+    meta_csv = bench / "cell_metadata.csv"
+    if not meta_csv.is_file() or meta_csv.stat().st_size <= 0:
+        return False, f"missing benchmark metadata: {meta_csv}"
+    meta = pd.read_csv(meta_csv, index_col=0, nrows=5)
+    label_key = _resolve_label_key(meta, cfg)
+    if label_key is None:
+        return (
+            False,
+            "no cell-type label column in benchmark metadata "
+            f"(columns: {list(meta.columns)}; expected Level_3 from annotated h5ad)",
+        )
+    return True, label_key
 
 def _overall_score(row: pd.Series, bio_keys: list[str], batch_keys: list[str],
                    bio_weight: float, batch_weight: float) -> float:
@@ -138,7 +156,7 @@ def run_scib_benchmark(
     *,
     config_path: str | Path | None = None,
     methods: list[str] | None = None,
-) -> Path:
+) -> Path | None:
     try:
         import scanpy as sc
         import scib
@@ -165,6 +183,14 @@ def run_scib_benchmark(
         else:
             raise ValueError(f"Batch key '{batch_key}' not in metadata.")
     label_key = _resolve_label_key(meta, cfg)
+    if label_key is None:
+        logger.warning(
+            "Skipping scIB benchmark: no cell-type labels in %s (columns: %s). "
+            "Run hkoca annotation and pass --annotated-h5ad to integration prep.",
+            meta_csv,
+            list(meta.columns),
+        )
+        return None
     logger.info("scIB batch_key=%s label_key=%s cells=%d", batch_key, label_key, len(meta))
 
     method_list = list(methods) if methods else list(metrics_cfg.get("methods") or DEFAULT_METHODS)
@@ -316,7 +342,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
     methods = [m.strip().lower() for m in str(args.methods).split(",") if m.strip()]
-    run_scib_benchmark(args.output_dir, config_path=args.config, methods=methods)
+    try:
+        result = run_scib_benchmark(args.output_dir, config_path=args.config, methods=methods)
+    except ImportError as exc:
+        logger.warning("Skipping scIB benchmark: %s", exc)
+        return 0
+    if result is None:
+        return 0
     return 0
 
 

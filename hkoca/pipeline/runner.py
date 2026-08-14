@@ -13,6 +13,7 @@ from hkoca.pipeline.checkpoints import (
     cellbender_complete,
     harmonize_complete,
     integration_prep_complete,
+    integration_prep_needs_label_refresh,
     integration_run_complete,
     integration_stage_complete,
     projection_stage_complete,
@@ -279,9 +280,17 @@ def run_integration_stage(
             logger.info("[dry-run] would run integration prep + run for study %s", study)
             continue
 
-        if resume and not force and integration_prep_complete(int_dir):
+        prep_done = integration_prep_complete(int_dir)
+        needs_labels = integration_prep_needs_label_refresh(int_dir, annotated_h5ad)
+        if resume and not force and prep_done and not needs_labels:
             logger.info("Integration prep already complete for %s; skipping prep.", study)
         else:
+            if needs_labels:
+                logger.info(
+                    "Re-running integration prep for %s to transfer labels from %s.",
+                    study,
+                    annotated_h5ad,
+                )
             extra = (
                 ["--transgenes", ",".join(cfg.transgenes)] if cfg.transgenes else None
             )
@@ -290,7 +299,7 @@ def run_integration_stage(
                 output_dir=int_dir,
                 annotated_h5ad=annotated_h5ad,
                 config=cfg.integration_config or None,
-                force_overwrite=force,
+                force_overwrite=force or needs_labels,
                 dry_run=False,
                 extra_args=extra,
             )

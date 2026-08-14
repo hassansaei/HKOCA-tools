@@ -627,6 +627,7 @@ tryCatch({
         timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
         param_hash = digest::digest(run_params),
         params = run_params,
+        annotation_columns = intersect(c("Level_1", "Level_2", "Level_3"), colnames(obj@meta.data)),
         celltype_colors_yaml = hkoca_palettes$path,
         outputs = list(
             prepared_rds = prepared_rds,

@@ -91,6 +91,9 @@ def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
     env["HKOCA_TRANSGENES"] = os.environ.get("HKOCA_TRANSGENES", "").strip() or ",".join(
         DEFAULT_TRANSGENES
     )
+    ann_py = resolve_annotation_python()
+    if ann_py:
+        env["HKOCA_ANNOTATION_PYTHON"] = ann_py
     return env
 
 
@@ -259,7 +262,7 @@ def run_scib_stage(
     methods: list[str],
     force_overwrite: bool = False,
 ) -> int:
-    from hkoca.integration.benchmark import scib_install_hint
+    from hkoca.integration.benchmark import benchmark_metadata_ready, scib_install_hint
 
     try:
         rscript = find_rscript()
@@ -313,6 +316,14 @@ def run_scib_stage(
     if result.returncode != 0:
         logger.error("Benchmark embedding export failed (exit %s).", result.returncode)
         return result.returncode
+
+    ready, reason = benchmark_metadata_ready(output_dir)
+    if not ready:
+        logger.warning(
+            "Skipping optional scIB benchmark (%s). Integration RDS outputs are unchanged.",
+            reason,
+        )
+        return 0
 
     bench_cmd = [
         py,

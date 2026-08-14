@@ -142,6 +142,37 @@ def integration_prep_complete(integration_dir: str) -> bool:
     return _nonempty_file(integration_prepared_rds(integration_dir))
 
 
+def integration_prep_needs_label_refresh(
+    integration_dir: str,
+    annotated_h5ad: str | None,
+) -> bool:
+    """True when annotated h5ad exists but prep outputs lack Level_3 labels."""
+    if not annotated_h5ad or not _nonempty_file(annotated_h5ad):
+        return False
+    if not integration_prep_complete(integration_dir):
+        return False
+    meta_json = os.path.join(integration_dir, "prep", ".sct_prepared.meta.json")
+    if not _nonempty_file(meta_json):
+        return True
+    try:
+        import json
+
+        with open(meta_json, encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return True
+    cols = meta.get("annotation_columns")
+    if isinstance(cols, list) and "Level_3" in cols:
+        return False
+    prev_ann = (meta.get("params") or {}).get("annotated_h5ad")
+    prev_str = str(prev_ann or "").strip()
+    if prev_str in ("", "NA", "null", "None"):
+        return True
+    if os.path.normpath(prev_str) != os.path.normpath(annotated_h5ad):
+        return True
+    return True
+
+
 def integration_run_complete(integration_dir: str, methods: str) -> tuple[bool, list[str]]:
     missing: list[str] = []
     for method in _parse_methods(methods):
