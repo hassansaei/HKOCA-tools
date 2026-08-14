@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 
-from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
+from hkoca.conda_env import ENV_PROJECTION, hkoca_source_root, python_env
 
 from hkoca.pipeline.checkpoints import (
     annotation_complete,
@@ -345,21 +345,19 @@ def run_integration_stage(
     return 0
 
 
-DEFAULT_PROJECTION_ENV = "hkoca_projection"
+DEFAULT_PROJECTION_ENV = ENV_PROJECTION
 
 
 def _projection_python() -> tuple[str, dict[str, str]]:
     env_name = os.environ.get("HKOCA_PROJECTION_ENV", DEFAULT_PROJECTION_ENV).strip() or DEFAULT_PROJECTION_ENV
-    prefix = resolve_env_prefix(env_name, "python")
-    if prefix is None:
+    try:
+        return python_env(env_name, need_hkoca=True)
+    except FileNotFoundError as exc:
         raise FileNotFoundError(
             f"Projection conda env '{env_name}' not found. Create it from "
-            "conda/environment_projection.yaml, pip install -e ., and run on a GPU node. "
+            "conda/environment_projection.yaml and run on a GPU node. "
             "Override with HKOCA_PROJECTION_ENV."
-        )
-    python = prefix / "bin" / "python"
-    logger.info("Using projection conda env: %s", prefix)
-    return str(python), subprocess_env_for_prefix(prefix)
+        ) from exc
 
 
 def run_projection_stage(
@@ -389,6 +387,7 @@ def run_projection_stage(
     if not dry_run:
         try:
             python, env = _projection_python()
+            logger.info("Using projection conda env: %s", env.get("CONDA_PREFIX", ""))
         except FileNotFoundError as exc:
             logger.error("%s", exc)
             return 1
@@ -416,8 +415,7 @@ def run_projection_stage(
         argv = [
             python,
             "-m",
-            "hkoca.cli",
-            "projection",
+            "hkoca.projection",
             "map",
             "--query",
             query_rds,
@@ -446,7 +444,14 @@ def run_projection_stage(
         logger.info("Projection argv: %s", " ".join(argv))
         proc = subprocess.run(argv, check=False, env=env)
         if proc.returncode != 0:
-            logger.error("Projection failed for study '%s' (exit %s).", study, proc.returncode)
+            logger.error(
+                "Projection failed for study '%s' (exit %s). "
+                "If import errors persist, run: conda activate hkoca_projection && "
+                "pip install -e %s",
+                study,
+                proc.returncode,
+                hkoca_source_root(),
+            )
             return int(proc.returncode)
 
     if dry_run:

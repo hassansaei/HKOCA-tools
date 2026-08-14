@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
+
+# Names must match ``name:`` in conda/environment_*.yaml
+ENV_CELLBENDER = "hkoca_cellbender"
+ENV_HARMONIZE = "hkoca_harmonize"
+ENV_QC = "sc_qc_pipeline"
+ENV_INTEGRATION = "hkoca_integration"
+ENV_PROJECTION = "hkoca_projection"
 
 
 def conda_roots() -> list[Path]:
@@ -71,4 +79,68 @@ def subprocess_env_for_prefix(prefix: Path) -> dict[str, str]:
     py = bin_dir / "python"
     if py.is_file():
         env["RETICULATE_PYTHON"] = str(py)
+    return env
+
+
+def resolve_python(env_name: str) -> str | None:
+    prefix = resolve_env_prefix(env_name, "python")
+    if prefix is None:
+        return None
+    py = prefix / "bin" / "python"
+    return str(py) if py.is_file() else None
+
+
+def wire_harmonize_python(env: dict[str, str]) -> dict[str, str]:
+    """Point reticulate / integration prep at the harmonize env Python (scanpy/anndata)."""
+    ann_env = os.environ.get("HKOCA_ANNOTATION_ENV", ENV_HARMONIZE).strip() or ENV_HARMONIZE
+    ann_py = resolve_python(ann_env)
+    if ann_py:
+        env["HKOCA_ANNOTATION_PYTHON"] = ann_py
+        env["RETICULATE_PYTHON"] = ann_py
+    return env
+
+
+def r_env_for_rscript(rscript: str, *, harmonize_python: bool = False) -> dict[str, str]:
+    """Build subprocess env for an Rscript under its conda prefix."""
+    prefix = Path(rscript).resolve().parent.parent
+    env = subprocess_env_for_prefix(prefix)
+    if harmonize_python:
+        env = wire_harmonize_python(env)
+    return env
+
+
+def python_env(env_name: str, *, need_hkoca: bool = False) -> tuple[str, dict[str, str]]:
+    """Return (python, env) for a named conda env, optionally wiring hkoca on PYTHONPATH."""
+    prefix = resolve_env_prefix(env_name, "python")
+    if prefix is None:
+        raise FileNotFoundError(
+            f"Conda env '{env_name}' not found. Create it from conda/environment_*.yaml."
+        )
+    python = str(prefix / "bin" / "python")
+    env = subprocess_env_for_prefix(prefix)
+    if need_hkoca:
+        env = ensure_hkoca_on_pythonpath(env, python)
+    return python, env
+
+
+def hkoca_source_root() -> Path:
+    """Directory that contains the ``hkoca`` package (repo root for editable installs)."""
+    import hkoca
+
+    return Path(hkoca.__file__).resolve().parent.parent
+
+
+def ensure_hkoca_on_pythonpath(env: dict[str, str], python: str) -> dict[str, str]:
+    """Ensure ``hkoca`` is importable in a stage-specific conda env subprocess."""
+    probe = subprocess.run(
+        [python, "-c", "import hkoca"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode == 0:
+        return env
+    root = str(hkoca_source_root())
+    existing = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = root if not existing else f"{root}{os.pathsep}{existing}"
     return env

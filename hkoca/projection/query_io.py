@@ -13,11 +13,11 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
+from hkoca.conda_env import ENV_INTEGRATION, r_env_for_rscript, resolve_env_prefix
 
 logger = logging.getLogger("hkoca.projection")
 
-DEFAULT_INTEGRATION_ENV = "hkoca_integration"
+DEFAULT_INTEGRATION_ENV = ENV_INTEGRATION
 BATCH_ALIASES = ("sample_id", "sample", "donor_id", "batch", "orig.ident", "library_id")
 RDS_SUFFIXES = {".rds", ".Rds", ".RDS"}
 
@@ -53,8 +53,7 @@ def find_rscript() -> str:
 
 
 def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
-    prefix = Path(rscript).resolve().parent.parent
-    return subprocess_env_for_prefix(prefix)
+    return r_env_for_rscript(rscript, harmonize_python=False)
 
 
 def convert_seurat_rds_to_h5ad(

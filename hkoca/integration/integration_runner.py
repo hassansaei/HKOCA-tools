@@ -9,13 +9,21 @@ import subprocess
 from importlib import resources
 from pathlib import Path
 
-from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
+from hkoca.conda_env import (
+    ENV_HARMONIZE,
+    ENV_INTEGRATION,
+    ensure_hkoca_on_pythonpath,
+    python_env,
+    r_env_for_rscript,
+    resolve_env_prefix,
+    subprocess_env_for_prefix,
+)
 from hkoca.config import celltype_colors_path
 
 logger = logging.getLogger("hkoca.integration")
 
-DEFAULT_INTEGRATION_ENV = "hkoca_integration"
-DEFAULT_ANNOTATION_ENV = "hkoca_harmonize"
+DEFAULT_INTEGRATION_ENV = ENV_INTEGRATION
+DEFAULT_ANNOTATION_ENV = ENV_HARMONIZE
 DEFAULT_METHODS = ("harmony", "rpca", "cca")
 DEFAULT_TRANSGENES = ("AAV", "EGFP", "mCherry", "GFP", "eGFP", "LK03_eGFP")
 
@@ -85,15 +93,11 @@ def find_rscript() -> str:
 
 
 def _subprocess_env_for_rscript(rscript: str) -> dict[str, str]:
-    prefix = Path(rscript).resolve().parent.parent
-    env = subprocess_env_for_prefix(prefix)
+    env = r_env_for_rscript(rscript, harmonize_python=True)
     env["HKOCA_CELLTYPE_COLORS"] = str(celltype_colors_path())
     env["HKOCA_TRANSGENES"] = os.environ.get("HKOCA_TRANSGENES", "").strip() or ",".join(
         DEFAULT_TRANSGENES
     )
-    ann_py = resolve_annotation_python()
-    if ann_py:
-        env["HKOCA_ANNOTATION_PYTHON"] = ann_py
     return env
 
 
@@ -270,18 +274,21 @@ def run_scib_stage(
         logger.error("%s", exc)
         return 1
 
-    py = resolve_annotation_python() or shutil.which("python")
-    if not py:
-        logger.warning(
-            "No Python interpreter found for scIB benchmark; skipping. "
-            "Set HKOCA_ANNOTATION_ENV to enable benchmark metrics."
-        )
-        return 0
-
-    env = os.environ.copy()
-    prefix = Path(py).resolve().parent.parent
-    if (prefix / "bin" / "python").is_file():
-        env = subprocess_env_for_prefix(prefix)
+    try:
+        py, env = python_env(DEFAULT_ANNOTATION_ENV, need_hkoca=False)
+    except FileNotFoundError:
+        py = resolve_annotation_python() or shutil.which("python")
+        env = os.environ.copy()
+        if not py:
+            logger.warning(
+                "No Python interpreter found for scIB benchmark; skipping. "
+                "Set HKOCA_ANNOTATION_ENV to enable benchmark metrics."
+            )
+            return 0
+        prefix = Path(py).resolve().parent.parent
+        if (prefix / "bin" / "python").is_file():
+            env = subprocess_env_for_prefix(prefix)
+    env = ensure_hkoca_on_pythonpath(env, py)
 
     probe = subprocess.run(
         [py, "-c", "import scanpy, scib"],

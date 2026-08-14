@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from hkoca.conda_env import resolve_env_prefix, subprocess_env_for_prefix
+from hkoca.conda_env import ENV_CELLBENDER, resolve_env_prefix, subprocess_env_for_prefix
 
 from hkoca.cellbender.config import (
     CellBenderConfig,
@@ -21,7 +21,7 @@ from hkoca.cellbender.config import (
 logger = logging.getLogger("hkoca.cellbender")
 
 InputMode = Literal["h5", "mtx"]
-DEFAULT_CELLBENDER_ENV = "hkoca_cellbender"
+DEFAULT_CELLBENDER_ENV = ENV_CELLBENDER
 
 
 @dataclass(frozen=True)
