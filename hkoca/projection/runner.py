@@ -45,6 +45,8 @@ from hkoca.projection.scpoli import (
     validate_model_dir,
 )
 
+from hkoca.projection.stack import require_projection_stack
+
 logger = logging.getLogger("hkoca.projection")
 
 REQUIRED_ATLAS_OBS = ("Level_3_Integrated", "Level_2_Integrated", "Level_1_Integrated")
@@ -58,19 +60,6 @@ def _setup_logging_file(log_path: Path) -> None:
     fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
     fh.setLevel(logging.DEBUG)
     logger.addHandler(fh)
-
-
-def _require_projection_stack() -> None:
-    try:
-        import torch  # noqa: F401
-        from scarches.models.scpoli import scPoli  # noqa: F401
-    except ImportError as exc:
-        raise ImportError(
-            "scPoli projection requires the hkoca_projection conda env "
-            "(pytorch + scarches). Create it with:\n"
-            "  conda env create -f conda/environment_projection.yaml\n"
-            "  conda activate hkoca_projection && pip install -e ."
-        ) from exc
 
 
 def _assign_predicted_labels(
@@ -338,7 +327,7 @@ def project_query(
     joint_umap: bool | None = None,
 ) -> Path:
     """Run scPoli surgery, prototype classify, and write labels + figures."""
-    _require_projection_stack()
+    require_projection_stack()
     import torch
 
     atlas_path = Path(atlas_h5ad).expanduser().resolve()

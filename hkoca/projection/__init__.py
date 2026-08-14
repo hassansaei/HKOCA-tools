@@ -8,13 +8,14 @@ import sys
 
 from hkoca.projection.config import load_projection_config, packaged_config_path
 from hkoca.projection.runner import project_query
+from hkoca.projection.stack import projection_stack_available
 
 logger = logging.getLogger("hkoca.projection")
 
 
 def status_message() -> str:
     return (
-        "Atlas projection (scPoli surgery on hkoca_projection env).\n"
+        "Atlas projection (scPoli surgery in hkoca_projection; hkoca shared via PYTHONPATH).\n"
         "  hkoca projection map --query sct_prepared.rds --atlas atlas.h5ad "
         "--model-dir scPoli_Reference_Model --output-dir out/projection\n"
         "  hkoca projection map --config projection.config.yaml"
@@ -48,7 +49,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  conda activate hkoca_projection\n"
+            "  # Run from hkoca_harmonize; torch/scArches run in hkoca_projection automatically\n"
             "  hkoca projection map \\\n"
             "      --query results/integration/prep/sct_prepared.rds \\\n"
             "      --atlas reference/Master_Atlas_scPoli_Integrated_Reannotated_fullgenes.h5ad \\\n"
@@ -207,8 +208,30 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Output: %s", output_dir)
 
     if args.dry_run:
-        logger.info("Dry run: projection map would run with hkoca_projection env (scPoli surgery).")
+        logger.info("Dry run: projection map would run in hkoca_projection (scPoli surgery).")
         return 0
+
+    if not args.dry_run and not projection_stack_available():
+        import subprocess
+
+        from hkoca.conda_env import probe_projection_subprocess, projection_subprocess_env
+        from hkoca.projection.stack import PROJECTION_ENV_HINT
+
+        ok, detail = probe_projection_subprocess()
+        if not ok:
+            logger.error(
+                "Projection env is not ready (%s). %s",
+                detail,
+                PROJECTION_ENV_HINT,
+            )
+            return 1
+        python, env = projection_subprocess_env()
+        logger.info(
+            "Delegating to hkoca_projection (%s; hkoca via HKOCA_ROOT=%s)",
+            env.get("CONDA_PREFIX", ""),
+            env.get("HKOCA_ROOT", ""),
+        )
+        return subprocess.run([python, "-m", "hkoca.projection", *argv], env=env).returncode
 
     try:
         out_path = project_query(

@@ -2,7 +2,7 @@
 # Activate the selected HKOCA conda env, then run hkoca (or an explicit command).
 set -euo pipefail
 
-readonly ALLOWED_ENVS="hkoca_harmonize hkoca_cellbender sc_qc_pipeline hkoca_integration"
+readonly ALLOWED_ENVS="hkoca_harmonize hkoca_cellbender sc_qc_pipeline hkoca_integration hkoca_projection"
 HKOCA_ENV="${HKOCA_ENV:-hkoca_harmonize}"
 
 case " ${ALLOWED_ENVS} " in
@@ -16,6 +16,10 @@ esac
 # shellcheck source=/dev/null
 source /opt/conda/etc/profile.d/conda.sh
 conda activate "${HKOCA_ENV}"
+
+if [[ -f /etc/hkoca/HKOCA_ROOT ]]; then
+    export HKOCA_ROOT="$(cat /etc/hkoca/HKOCA_ROOT)"
+fi
 
 # Default: treat argv as hkoca subcommands/flags.
 # Use `--` to run an arbitrary command inside the env, e.g.:

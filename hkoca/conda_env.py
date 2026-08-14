@@ -125,9 +125,22 @@ def python_env(env_name: str, *, need_hkoca: bool = False) -> tuple[str, dict[st
 
 def hkoca_source_root() -> Path:
     """Directory that contains the ``hkoca`` package (repo root for editable installs)."""
+    override = os.environ.get("HKOCA_ROOT", "").strip()
+    if override:
+        return Path(override).resolve()
     import hkoca
 
     return Path(hkoca.__file__).resolve().parent.parent
+
+
+def wire_hkoca_pythonpath(env: dict[str, str]) -> dict[str, str]:
+    """Append HKOCA_ROOT / package root so stage envs can import hkoca without reinstall."""
+    root = str(hkoca_source_root())
+    existing = env.get("PYTHONPATH", "").strip()
+    if root not in existing.split(os.pathsep):
+        env["PYTHONPATH"] = root if not existing else f"{root}{os.pathsep}{existing}"
+    env["HKOCA_ROOT"] = root
+    return env
 
 
 def ensure_hkoca_on_pythonpath(env: dict[str, str], python: str) -> dict[str, str]:
@@ -140,7 +153,35 @@ def ensure_hkoca_on_pythonpath(env: dict[str, str], python: str) -> dict[str, st
     )
     if probe.returncode == 0:
         return env
-    root = str(hkoca_source_root())
-    existing = env.get("PYTHONPATH", "").strip()
-    env["PYTHONPATH"] = root if not existing else f"{root}{os.pathsep}{existing}"
-    return env
+    return wire_hkoca_pythonpath(env)
+
+
+def projection_subprocess_env() -> tuple[str, dict[str, str]]:
+    """Python + env for hkoca_projection with shared hkoca on PYTHONPATH."""
+    env_name = os.environ.get("HKOCA_PROJECTION_ENV", ENV_PROJECTION).strip() or ENV_PROJECTION
+    python, env = python_env(env_name, need_hkoca=True)
+    return python, env
+
+
+def probe_projection_subprocess() -> tuple[bool, str]:
+    """Return whether hkoca_projection can import torch, scarches, and hkoca.projection."""
+    try:
+        python, env = projection_subprocess_env()
+    except FileNotFoundError:
+        env_name = os.environ.get("HKOCA_PROJECTION_ENV", ENV_PROJECTION).strip() or ENV_PROJECTION
+        return False, f"conda env '{env_name}' not found"
+    proc = subprocess.run(
+        [
+            python,
+            "-c",
+            "import torch; from scarches.models.scpoli import scPoli; "
+            "import hkoca.projection  # noqa: F401",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        return True, "ok"
+    err = (proc.stderr or proc.stdout or "").strip()
+    return False, err.splitlines()[-1] if err else "projection env probe failed"

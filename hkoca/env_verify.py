@@ -15,6 +15,7 @@ from hkoca.conda_env import (
     ENV_PROJECTION,
     ENV_QC,
     ensure_hkoca_on_pythonpath,
+    probe_projection_subprocess,
     resolve_env_prefix,
     resolve_python,
     subprocess_env_for_prefix,
@@ -63,18 +64,24 @@ def _check_python_modules(
     modules: list[str],
     *,
     need_hkoca: bool = False,
+    python_path: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> list[EnvCheckResult]:
-    python = resolve_python(env_name)
-    if python is None:
-        return [EnvCheckResult(stage, env_name, False, "python not found")]
-    prefix = resolve_env_prefix(env_name, "python")
-    assert prefix is not None
-    env = subprocess_env_for_prefix(prefix)
+    if python_path is None:
+        python = resolve_python(env_name)
+        if python is None:
+            return [EnvCheckResult(stage, env_name, False, "python not found")]
+        prefix = resolve_env_prefix(env_name, "python")
+        assert prefix is not None
+        run_env = subprocess_env_for_prefix(prefix)
+    else:
+        python = python_path
+        run_env = dict(env or os.environ)
     if need_hkoca:
-        env = ensure_hkoca_on_pythonpath(env, python)
+        run_env = ensure_hkoca_on_pythonpath(run_env, python)
     results: list[EnvCheckResult] = []
     for mod in modules:
-        ok, detail = _probe_import(python, env, f"import {mod}")
+        ok, detail = _probe_import(python, run_env, f"import {mod}")
         label = f"{env_name} ({mod})"
         results.append(EnvCheckResult(stage, label, ok, detail))
     return results
@@ -147,20 +154,13 @@ def verify_environments(*, include_projection: bool = True) -> list[EnvCheckResu
     )
 
     if include_projection:
-        results.append(_check_env_exists("projection", ENV_PROJECTION, "python"))
-        results.extend(
-            _check_python_modules(
-                "projection (GPU stack)",
+        ok, detail = probe_projection_subprocess()
+        results.append(
+            EnvCheckResult(
+                "projection (hkoca_projection + shared hkoca)",
                 ENV_PROJECTION,
-                ["torch", "scarches"],
-            )
-        )
-        results.extend(
-            _check_python_modules(
-                "projection (hkoca module)",
-                ENV_PROJECTION,
-                ["hkoca.projection"],
-                need_hkoca=True,
+                ok,
+                detail,
             )
         )
         int_r = resolve_env_prefix(ENV_INTEGRATION, "Rscript")
@@ -212,8 +212,9 @@ def main(argv: list[str] | None = None) -> int:
     failed = [r for r in results if not r.ok]
     if failed:
         print(
-            f"\n{len(failed)} check(s) failed. Create missing envs from conda/environment_*.yaml "
-            f"and ensure hkoca is reachable (pip install -e . or PYTHONPATH to repo root).",
+            f"\n{len(failed)} check(s) failed. Create missing envs from conda/environment_*.yaml. "
+            "Install hkoca once in hkoca_harmonize (pip install -e .) and set HKOCA_ROOT "
+            "to the repo root if stage envs cannot import hkoca.",
             file=sys.stderr,
         )
         return 1

@@ -45,7 +45,8 @@ pip install -e .
 # Snapseed (annotation) is installed from https://github.com/hassansaei/snapseed
 # via environment_harmonize.yaml. To refresh only Snapseed later:
 #   pip install -U git+https://github.com/hassansaei/snapseed.git
-# Atlas projection (GPU): conda activate hkoca_projection && pip install -e .
+# Atlas projection (GPU): build hkoca_projection from environment_projection.yaml only.
+# hkoca is shared via HKOCA_ROOT / PYTHONPATH; do not pip install hkoca there.
 ```
 
 `hkoca qc-filter` runs harmonization in the active env, then automatically
@@ -133,8 +134,10 @@ Outputs are written under `--output`:
   (`projected_obj/sct_prepared_projected.h5ad`, figures, tables)
 
 Default `hkoca pipeline` stops at **integration**. Projection needs a GPU
-node and the `hkoca_projection` conda env (`pip install -e .` in that env).
-You can still run `hkoca projection map` on its own.
+node and a pre-built `hkoca_projection` conda env (PyTorch + scArches from
+`conda/environment_projection.yaml`). hkoca itself is installed once in
+`hkoca_harmonize`; the pipeline passes it to projection via `HKOCA_ROOT`.
+You can still run `hkoca projection map` on its own from the harmonize env.
 
 ### Annotation (Snapseed)
 
@@ -213,9 +216,9 @@ Provide:
 
 ```bash
 conda env create -f conda/environment_projection.yaml
-conda activate hkoca_projection
-pip install -e .
 
+# Run from hkoca_harmonize (hkoca delegates torch/scArches work to hkoca_projection)
+export HKOCA_ROOT=/path/to/HKOCA-tools   # once, if not using editable harmonize install
 hkoca projection map \
   --query results/integration/prep/sct_prepared.rds \
   --atlas reference/Master_Atlas_scPoli_Integrated_Reannotated_fullgenes.h5ad \

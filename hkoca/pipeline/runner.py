@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 
-from hkoca.conda_env import ENV_PROJECTION, hkoca_source_root, python_env
+from hkoca.conda_env import probe_projection_subprocess, projection_subprocess_env
 
 from hkoca.pipeline.checkpoints import (
     annotation_complete,
@@ -345,21 +345,6 @@ def run_integration_stage(
     return 0
 
 
-DEFAULT_PROJECTION_ENV = ENV_PROJECTION
-
-
-def _projection_python() -> tuple[str, dict[str, str]]:
-    env_name = os.environ.get("HKOCA_PROJECTION_ENV", DEFAULT_PROJECTION_ENV).strip() or DEFAULT_PROJECTION_ENV
-    try:
-        return python_env(env_name, need_hkoca=True)
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(
-            f"Projection conda env '{env_name}' not found. Create it from "
-            "conda/environment_projection.yaml and run on a GPU node. "
-            "Override with HKOCA_PROJECTION_ENV."
-        ) from exc
-
-
 def run_projection_stage(
     cfg: PipelineConfig,
     df,
@@ -369,6 +354,8 @@ def run_projection_stage(
     force: bool = False,
     verbose: bool = False,
 ) -> int:
+    from hkoca.projection.stack import PROJECTION_ENV_HINT
+
     if resume and not force:
         ok, reason = projection_stage_complete(cfg, df)
         if ok:
@@ -385,12 +372,24 @@ def run_projection_stage(
     python = "python"
     env = os.environ.copy()
     if not dry_run:
+        ok, detail = probe_projection_subprocess()
+        if not ok:
+            logger.error(
+                "Projection env is not ready (%s). %s",
+                detail,
+                PROJECTION_ENV_HINT,
+            )
+            return 1
         try:
-            python, env = _projection_python()
-            logger.info("Using projection conda env: %s", env.get("CONDA_PREFIX", ""))
+            python, env = projection_subprocess_env()
         except FileNotFoundError as exc:
             logger.error("%s", exc)
             return 1
+        logger.info(
+            "Using projection env: %s (hkoca via PYTHONPATH=%s)",
+            env.get("CONDA_PREFIX", ""),
+            env.get("HKOCA_ROOT", env.get("PYTHONPATH", "")),
+        )
 
     for row in artifacts:
         study = row["study"]
@@ -434,23 +433,21 @@ def run_projection_stage(
             argv.append("-v")
 
         if dry_run:
-            logger.info("[dry-run] would run: %s", " ".join(argv))
+            logger.info("[dry-run] would run in hkoca_projection: %s", " ".join(argv))
             continue
 
         if resume and not force and os.path.isfile(out_h5ad) and os.path.getsize(out_h5ad) > 0:
             logger.info("Projected h5ad already present for %s; skipping.", study)
             continue
 
-        logger.info("Projection argv: %s", " ".join(argv))
+        logger.info("Projection command: %s", " ".join(argv))
         proc = subprocess.run(argv, check=False, env=env)
         if proc.returncode != 0:
             logger.error(
-                "Projection failed for study '%s' (exit %s). "
-                "If import errors persist, run: conda activate hkoca_projection && "
-                "pip install -e %s",
+                "Projection failed for study '%s' (exit %s). %s",
                 study,
                 proc.returncode,
-                hkoca_source_root(),
+                PROJECTION_ENV_HINT,
             )
             return int(proc.returncode)
 
