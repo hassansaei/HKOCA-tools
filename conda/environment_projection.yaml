@@ -1,8 +1,10 @@
 # GPU required for scPoli surgery. CPU is possible but very slow.
 # Scientific stack is conda-forge only. GPU PyTorch is installed from
-# pip CUDA 12.4 wheels so mamba is not forced to mix the pytorch channel
+# pip CUDA 12.1 wheels so mamba is not forced to mix the pytorch channel
 # (strict priority blocks igraph / libjpeg-turbo and matplotlib then
 # tries Qt/PySide).
+# cu121 matches NVIDIA driver 530-545 (CUDA 12.1-12.3, e.g. A100 with 545.x).
+# cu124 wheels need driver 550+ and fail with "found version 12030".
 name: hkoca_projection
 channels:
   - conda-forge
@@ -21,6 +23,6 @@ dependencies:
   - leidenalg
   - python-igraph
   - pip:
-      - --extra-index-url=https://download.pytorch.org/whl/cu124
+      - --extra-index-url=https://download.pytorch.org/whl/cu121
       - torch
       - scarches==0.6.1

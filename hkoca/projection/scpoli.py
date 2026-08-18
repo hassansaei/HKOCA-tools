@@ -300,6 +300,17 @@ def load_query_model(query, model_dir: Path, unknown_label: str = UNKNOWN_LABEL)
             unknown_ct_names=[unknown_label],
             map_location=map_location,
         )
+    except Exception as exc:
+        text = str(exc)
+        if "NVIDIA driver" in text and "too old" in text:
+            raise RuntimeError(
+                "PyTorch in hkoca_projection was built for a newer CUDA than this "
+                "GPU driver (nvidia-smi 12.3 / 12030). Reinstall torch in that "
+                "env with CUDA 12.1 wheels (one-time, not during the pipeline): "
+                "pip install --index-url https://download.pytorch.org/whl/cu121 "
+                "--force-reinstall torch"
+            ) from exc
+        raise
     finally:
         pd.DataFrame.__setitem__ = orig_setitem
 
