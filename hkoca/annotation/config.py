@@ -111,8 +111,8 @@ def load_annotation_config(
     markers = resolve_path(paths_raw.get("markers"), base) or packaged_markers_path()
     output_dir = resolve_path(paths_raw.get("output_dir"), base) or (base / "annotation_results")
     annotated_subdir = str(paths_raw.get("annotated_subdir") or "annotated_obj")
-    clustered_subdir = str(paths_raw.get("clustered_subdir") or "clustered")
-    figures_subdir = str(paths_raw.get("figures_subdir") or "figures")
+    clustered_subdir = str(paths_raw.get("clustered_subdir") or "clustered_obj")
+    plots_subdir = str(paths_raw.get("plots_subdir") or paths_raw.get("figures_subdir") or "plots")
 
     return {
         "config_path": cfg_path,
@@ -122,6 +122,6 @@ def load_annotation_config(
         "output_dir": output_dir,
         "annotated_dir": output_dir / annotated_subdir,
         "clustered_dir": output_dir / clustered_subdir,
-        "figures_dir": output_dir / figures_subdir,
+        "plots_dir": output_dir / plots_subdir,
         "parameters": params,
     }

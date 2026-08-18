@@ -120,11 +120,13 @@ Print the packaged template path with `hkoca pipeline --print-template`.
 Outputs are written under `--output`:
 
 - CellBender: `{sample_dir}/{sample_id}_filtered.h5` (when enabled)
-- Harmonize: `{output}/{study}/raw|harmonized|rds/`
+- Harmonize: `{output}/harmonized/` (intermediate `{output}/raw/` and `{output}/rds/`
+  are removed when the pipeline finishes)
 - QC: `{output}/qc_filter/` (or `--qc-output`)
   - `{output}/qc_filter/qc_filtered_rds/{study}*_filtered.rds`
   - `{output}/qc_filter/h5ad_converted/{study}*_filtered.h5ad`
-- Annotation: `{output}/annotation/annotated_obj/{stem}_annotated.h5ad`
+- Annotation: `{output}/annotation/annotated_obj/{stem}_annotated.h5ad`,
+  `{output}/annotation/clustered_obj/`, `{output}/annotation/plots/`
 - Integration: `{output}/integration/prep/sct_prepared.rds` and
   `{output}/integration/objects/integrated_{method}.rds`
   Prep diagnostics: `{output}/integration/prep/*.png`
@@ -159,8 +161,8 @@ hkoca annotation run \
   --markers ./snapseed_markers.yaml
 ```
 
-Outputs under `--output-dir`: `annotated_obj/*_annotated.h5ad`, `clustered/*_clustered.h5ad`,
-optional `figures/`. UMAP PNGs are written by default (flat under `figures/`, no
+Outputs under `--output-dir`: `annotated_obj/*_annotated.h5ad`, `clustered_obj/*_clustered.h5ad`,
+optional `plots/`. UMAP PNGs are written by default (flat under `plots/`, no
 per-sample subfolder) for Leiden and Level 1-3 per resolution; pass `--no-save-plots`
 to skip. Each annotated object stores labels for all three resolutions
 (`leiden_res_0.4` / `Level_*_res0.4`, etc.).

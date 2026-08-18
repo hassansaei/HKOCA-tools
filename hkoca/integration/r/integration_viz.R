@@ -43,6 +43,14 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
     c(intersect(preferred, detected), setdiff(detected, preferred))
 }
 
+.transgene_split_column <- function(meta) {
+    for (col in c("sample_id", "orig.ident")) {
+        if (!col %in% colnames(meta)) next
+        if (length(.categorical_levels(meta[[col]])) >= 2L) return(col)
+    }
+    NA_character_
+}
+
 .split_plot_layout <- function(n_panels) {
     if (n_panels <= 1L) {
         return(list(num_columns = 1L, width = 8, height = 6))
@@ -551,26 +559,32 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
             )
             if (!is.null(saved)) feature_outputs[[grp$label]] <- saved
         }
-        transgene_feats <- .features_with_expression(
-            obj, .match_features_in_object(obj, transgene_names)
-        )
+        transgene_feats <- .match_features_in_object(obj, transgene_names)
+        transgene_feats <- transgene_feats[transgene_feats %in% rownames(obj)]
         if (length(transgene_feats)) {
             saved <- .save_one_feature_plot(
                 obj, transgene_feats, reduction, out_dir, "transgenes", method_label
             )
             if (!is.null(saved)) feature_outputs[["transgenes"]] <- saved
-            split_fp <- .save_split_feature_plots(
-                obj, transgene_feats, reduction, out_dir, split_cols,
-                "transgenes", method_label
-            )
-            if (length(split_fp)) {
-                feature_outputs[["transgenes_split"]] <- split_fp
-            } else {
+            split_col <- .transgene_split_column(obj@meta.data)
+            if (is.na(split_col)) {
                 .log_warn(
-                    "[%s] No split transgene FeaturePlots saved (columns tried: %s).",
-                    method_label,
-                    if (length(split_cols)) paste(split_cols, collapse = ", ") else "(none)"
+                    "[%s] Transgenes detected (%s) but no sample_id/orig.ident with >=2 levels for split FeaturePlot.",
+                    method_label, paste(transgene_feats, collapse = ", ")
                 )
+            } else {
+                split_fp <- .save_split_feature_plots(
+                    obj, transgene_feats, reduction, out_dir, split_col,
+                    "transgenes", method_label
+                )
+                if (length(split_fp)) {
+                    feature_outputs[["transgenes_split"]] <- split_fp
+                } else {
+                    .log_warn(
+                        "[%s] No split transgene FeaturePlots saved (split column: %s).",
+                        method_label, split_col
+                    )
+                }
             }
         } else if (length(transgene_names)) {
             .log_info(

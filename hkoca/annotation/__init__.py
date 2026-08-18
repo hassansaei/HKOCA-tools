@@ -85,7 +85,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         "-o",
         default=None,
-        help="Output root (annotated_obj/, clustered/, figures/)",
+        help="Output root (annotated_obj/, clustered_obj/, plots/)",
     )
     p_run.add_argument(
         "--markers",
@@ -114,7 +114,7 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="save_plots",
         action="store_true",
         default=None,
-        help="Write UMAP PNGs under figures/ (default: on)",
+        help="Write UMAP PNGs under plots/ (default: on)",
     )
     p_run.add_argument(
         "--no-save-plots",
@@ -213,7 +213,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     )
     annotated_dir = output_root / Path(cfg["annotated_dir"]).name
     clustered_dir = output_root / Path(cfg["clustered_dir"]).name
-    figures_dir = output_root / Path(cfg["figures_dir"]).name
+    plots_dir = output_root / Path(cfg["plots_dir"]).name
 
     if args.input:
         inputs = discover_h5ad_inputs(args.input)
@@ -258,7 +258,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                     resolutions=params["resolutions"],
                     output_dir=annotated_dir,
                     clustered_dir=clustered_dir,
-                    figures_dir=figures_dir,
+                    figures_dir=plots_dir,
                     manual_annotations=manual,
                     seed=int(params["seed"]),
                     hvg_n_top_genes=int(params["hvg_n_top_genes"]),
@@ -280,7 +280,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             resolutions=params["resolutions"],
             annotated_dir=annotated_dir,
             clustered_dir=clustered_dir,
-            figures_dir=figures_dir,
+            figures_dir=plots_dir,
             parameters=params,
             force=bool(args.force),
         )

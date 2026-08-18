@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 
 from hkoca.conda_env import projection_subprocess_env
@@ -40,6 +41,16 @@ from hkoca.pipeline.paths import (
 )
 
 logger = logging.getLogger("hkoca.pipeline")
+
+
+def _remove_harmonize_intermediate_folders(output_root: str) -> None:
+    """Drop leftover harmonize raw/ and rds/ after QC has consumed them."""
+    for name in ("raw", "rds"):
+        path = os.path.join(output_root, name)
+        if not os.path.isdir(path):
+            continue
+        shutil.rmtree(path)
+        logger.info("Removed intermediate folder: %s", path)
 
 
 def _cellbender_suffix(cfg: PipelineConfig) -> str:
@@ -219,8 +230,8 @@ def run_annotation_stage(
 
     markers = cfg.annotation_markers or str(snapseed_markers_path())
     annotated_dir = os.path.join(ann_root, "annotated_obj")
-    clustered_dir = os.path.join(ann_root, "clustered")
-    figures_dir = os.path.join(ann_root, "figures")
+    clustered_dir = os.path.join(ann_root, "clustered_obj")
+    plots_dir = os.path.join(ann_root, "plots")
     os.makedirs(annotated_dir, exist_ok=True)
 
     run_annotation_batch(
@@ -229,7 +240,7 @@ def run_annotation_stage(
         resolutions=params["resolutions"],
         annotated_dir=annotated_dir,
         clustered_dir=clustered_dir,
-        figures_dir=figures_dir,
+        figures_dir=plots_dir,
         parameters=params,
         force=force,
     )
@@ -564,5 +575,7 @@ def run_pipeline(
             continue
 
     logger.info("=" * 64)
+    if not dry_run:
+        _remove_harmonize_intermediate_folders(cfg.output_root)
     logger.info("Pipeline complete. Outputs under: %s", cfg.output_root)
     return 0

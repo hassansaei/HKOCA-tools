@@ -207,7 +207,11 @@ def run_methods(
     dry_run: bool = False,
     extra_args: list[str] | None = None,
 ) -> int:
-    from hkoca.integration.benchmark import benchmark_complete
+    from hkoca.integration.benchmark import (
+        benchmark_complete,
+        metrics_csv_path,
+        write_benchmark_plots,
+    )
 
     methods_list = parse_methods(methods)
     if not dry_run and not os.path.isfile(prepared_rds):
@@ -250,6 +254,16 @@ def run_methods(
     if not force_overwrite and benchmark_complete(output_dir):
         logger.info("Skipping scIB benchmark; results already exist under %s/benchmark.", output_dir)
         return 0
+
+    csv_path = metrics_csv_path(output_dir)
+    if not force_overwrite and csv_path.is_file() and csv_path.stat().st_size > 0:
+        try:
+            write_benchmark_plots(output_dir)
+            if benchmark_complete(output_dir):
+                logger.info("Wrote missing scIB plots under %s/benchmark.", output_dir)
+                return 0
+        except Exception as exc:
+            logger.warning("Could not rebuild scIB plots from CSV: %s", exc)
 
     return run_scib_stage(
         prepared_rds=prepared_rds,

@@ -21,6 +21,8 @@ Stage I/O (per study):
   qc_filter   -> qc_filter/qc_filtered_rds/{study}*_filtered.rds
                  qc_filter/h5ad_converted/{study}*_filtered.h5ad
   annotation  -> annotation/annotated_obj/{stem}_annotated.h5ad
+                 annotation/clustered_obj/{stem}_clustered.h5ad
+                 annotation/plots/*.png
   integration -> integration/prep/sct_prepared.rds (single-study layout)
                  integration/nonintegrated/*.png
                  integration/{harmony,rpca,cca}/*.png

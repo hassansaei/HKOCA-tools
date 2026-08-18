@@ -543,12 +543,12 @@ def annotate_dataset(
     clustered_dir_p = (
         Path(clustered_dir).expanduser().resolve()
         if clustered_dir
-        else out_dir.parent / "clustered"
+        else out_dir.parent / "clustered_obj"
     )
     figures_dir_p = (
         Path(figures_dir).expanduser().resolve()
         if figures_dir
-        else out_dir.parent / "figures"
+        else out_dir.parent / "plots"
     )
 
     out_path = out_dir / f"{path.stem}_annotated.h5ad"

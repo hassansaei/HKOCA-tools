@@ -38,9 +38,25 @@ def metrics_csv_path(output_dir: str | Path, cfg: dict[str, Any] | None = None) 
     return benchmark_dir(output_dir) / name
 
 
+def benchmark_plot_paths(output_dir: str | Path, cfg: dict[str, Any] | None = None) -> tuple[Path, Path]:
+    metrics = (cfg or load_benchmark_config()).get("metrics") or {}
+    bench = benchmark_dir(output_dir)
+    heat = bench / (metrics.get("heatmap_plot") or "scib_metrics_heatmap.png")
+    rank = bench / (metrics.get("ranking_plot") or "scib_method_ranking.png")
+    return heat, rank
+
+
+def benchmark_plots_complete(output_dir: str | Path, cfg: dict[str, Any] | None = None) -> bool:
+    heat, rank = benchmark_plot_paths(output_dir, cfg)
+    return heat.is_file() and heat.stat().st_size > 0 and rank.is_file() and rank.stat().st_size > 0
+
+
 def benchmark_complete(output_dir: str | Path, cfg: dict[str, Any] | None = None) -> bool:
-    path = metrics_csv_path(output_dir, cfg)
-    return path.is_file() and path.stat().st_size > 0
+    return (
+        metrics_csv_path(output_dir, cfg).is_file()
+        and metrics_csv_path(output_dir, cfg).stat().st_size > 0
+        and benchmark_plots_complete(output_dir, cfg)
+    )
 
 
 def scib_available() -> bool:
@@ -122,33 +138,63 @@ def _plot_results(df: pd.DataFrame, cfg: dict[str, Any], out_dir: Path) -> None:
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import seaborn as sns
 
     metrics_cfg = cfg["metrics"]
     score_cols = [c for c in metrics_cfg["bio_keys"] + metrics_cfg["batch_keys"] + ["overall"] if c in df.columns]
+    if not score_cols:
+        raise ValueError("No scIB score columns to plot.")
     plot_df = df.loc[:, score_cols].astype(float)
+    data = np.asarray(plot_df.to_numpy(), dtype=float)
 
     heat_path = out_dir / metrics_cfg.get("heatmap_plot", "scib_metrics_heatmap.png")
     fig, ax = plt.subplots(figsize=(max(8, 0.9 * len(score_cols) + 3), max(3.5, 0.7 * len(plot_df) + 2)))
-    sns.heatmap(plot_df, annot=True, fmt=".3f", cmap="YlGnBu", vmin=0, vmax=1, ax=ax)
+    ax.grid(False)
+    im = ax.imshow(np.ma.masked_invalid(data), aspect="auto", cmap="YlGnBu", vmin=0, vmax=1)
+    ax.set_xticks(range(len(plot_df.columns)))
+    ax.set_xticklabels(plot_df.columns.astype(str), rotation=45, ha="right")
+    ax.set_yticks(range(len(plot_df.index)))
+    ax.set_yticklabels(plot_df.index.astype(str))
     ax.set_title("scIB metrics (Harmony / RPCA / CCA)")
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            val = data[i, j]
+            if np.isfinite(val):
+                ax.text(j, i, f"{val:.3f}", ha="center", va="center", fontsize=8)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout()
-    fig.savefig(heat_path, dpi=150, bbox_inches="tight")
+    fig.savefig(heat_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     logger.info("Saved heatmap: %s", heat_path)
 
+    if "overall" not in plot_df.columns:
+        raise ValueError("Missing overall score column for ranking plot.")
     rank_path = out_dir / metrics_cfg.get("ranking_plot", "scib_method_ranking.png")
     order = plot_df["overall"].sort_values(ascending=False)
     fig, ax = plt.subplots(figsize=(7, 4))
+    ax.grid(False)
     colors = ["#0072B2" if m != "unintegrated" else "#BBBBBB" for m in order.index]
-    ax.bar(order.index.astype(str), order.values, color=colors)
+    ax.bar(order.index.astype(str), order.to_numpy(dtype=float), color=colors)
     ax.set_ylabel("Overall score (0.6 bio + 0.4 batch)")
     ax.set_ylim(0, 1)
     ax.set_title("Integration ranking")
     fig.tight_layout()
-    fig.savefig(rank_path, dpi=150, bbox_inches="tight")
+    fig.savefig(rank_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     logger.info("Saved ranking plot: %s", rank_path)
+
+
+def write_benchmark_plots(output_dir: str | Path, *, config_path: str | Path | None = None) -> None:
+    """Write heatmap and ranking PNGs from an existing scIB metrics CSV."""
+    cfg = load_benchmark_config(config_path)
+    csv_path = metrics_csv_path(output_dir, cfg)
+    if not csv_path.is_file() or csv_path.stat().st_size <= 0:
+        raise FileNotFoundError(f"Missing scIB metrics CSV: {csv_path}")
+    df = pd.read_csv(csv_path, index_col=0)
+    if df.empty:
+        raise ValueError(f"Empty scIB metrics CSV: {csv_path}")
+    out_dir = benchmark_dir(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _plot_results(df, cfg, out_dir)
 
 
 def run_scib_benchmark(
@@ -326,7 +372,7 @@ def run_scib_benchmark(
     try:
         _plot_results(df, cfg, bench)
     except Exception as exc:
-        logger.warning("Could not write benchmark plots: %s", exc)
+        logger.error("Could not write benchmark plots: %s", exc, exc_info=True)
     return out_csv
 
 

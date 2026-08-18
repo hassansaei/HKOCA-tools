@@ -10,8 +10,8 @@ paths:
   # Root output directory.
   output_dir: annotation_results
   annotated_subdir: annotated_obj
-  clustered_subdir: clustered
-  figures_subdir: figures
+  clustered_subdir: clustered_obj
+  plots_subdir: plots
 
 parameters:
   seed: 42
