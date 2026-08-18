@@ -53,7 +53,6 @@ REQUIRED_ATLAS_OBS = ("Level_3_Integrated", "Level_2_Integrated", "Level_1_Integ
 
 
 def _setup_logging_file(log_path: Path) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
     if any(isinstance(h, logging.FileHandler) and h.baseFilename == str(log_path) for h in logger.handlers):
         return
     fh = logging.FileHandler(log_path, encoding="utf-8")
@@ -173,8 +172,8 @@ def _maybe_joint_umap(
     celltype_key: str,
     unknown_label: str,
     cfg: dict[str, Any],
-    ckpt_dir: Path,
-    figures_dir: Path,
+    projected_dir: Path,
+    plots_dir: Path,
     stem: str,
     atlas_sub=None,
 ):
@@ -210,14 +209,14 @@ def _maybe_joint_umap(
     sc.tl.umap(lat, random_state=cfg["seed"])
     q_mask = lat.obs["dataset_role"].to_numpy() == "query"
     query.obsm["X_umap_joint"] = np.asarray(lat.obsm["X_umap"][q_mask], dtype=np.float32)
-    umap_path = ckpt_dir / f"joint_latent_umap_{stem}.h5ad"
+    umap_path = projected_dir / f"joint_latent_umap_{stem}.h5ad"
     lat.write_h5ad(umap_path, compression="gzip")
     logger.info("Wrote exploratory joint UMAP: %s", umap_path)
     if cfg.get("save_plots", True):
         plot_joint_umap_panels(
             lat,
             query.obs["Level_3_uncert"].to_numpy(),
-            figures_dir / f"joint_umap_{stem}.png",
+            plots_dir / f"joint_umap_{stem}.png",
             dpi=cfg["dpi"],
         )
 
@@ -228,7 +227,7 @@ def _atlas_umap_figures(
     atlas_path: Path,
     atlas_obs: pd.DataFrame,
     cfg: dict[str, Any],
-    figures_dir: Path,
+    plots_dir: Path,
     tables_dir: Path,
     stem: str,
     batch_key: str,
@@ -240,7 +239,7 @@ def _atlas_umap_figures(
     atlas_umap = read_atlas_obsm(atlas_path, umap_key)
     if atlas_umap is None:
         logger.warning(
-            "Atlas missing %s; skipping atlas-UMAP overlay figures.",
+            "Atlas missing %s; skipping atlas-UMAP overlay plots.",
             umap_key,
         )
         return {}
@@ -274,7 +273,7 @@ def _atlas_umap_figures(
         bg_umap,
         q_umap,
         query.obs["Level_3_pred"],
-        figures_dir / f"umap_overlay_Level_3_pred_{stem}.png",
+        plots_dir / f"umap_overlay_Level_3_pred_{stem}.png",
         title="Atlas + projected query (Level_3_pred)",
         dpi=dpi,
         palette_key="Level_3_Integrated",
@@ -284,14 +283,14 @@ def _atlas_umap_figures(
         q_umap,
         sim,
         d_ref,
-        figures_dir / f"query_on_atlas_umap_similarity_{stem}.png",
+        plots_dir / f"query_on_atlas_umap_similarity_{stem}.png",
         dpi=dpi,
     )
     plot_query_categorical(
         bg_umap,
         q_umap,
         query.obs["Level_3_pred"].astype(str).to_numpy(),
-        figures_dir / f"query_on_atlas_umap_Level3_pred_{stem}.png",
+        plots_dir / f"query_on_atlas_umap_Level3_pred_{stem}.png",
         title="Query projected on atlas UMAP · Level_3_pred",
         dpi=dpi,
         palette_key="Level_3_Integrated",
@@ -300,7 +299,7 @@ def _atlas_umap_figures(
         bg_umap,
         q_umap,
         query.obs["Level_2_pred"].astype(str).to_numpy(),
-        figures_dir / f"query_on_atlas_umap_Level2_pred_{stem}.png",
+        plots_dir / f"query_on_atlas_umap_Level2_pred_{stem}.png",
         title="Query projected on atlas UMAP · Level_2_pred",
         dpi=dpi,
         palette_key="Level_2_Integrated",
@@ -309,7 +308,7 @@ def _atlas_umap_figures(
         bg_umap,
         q_umap,
         query.obs["Level_1_pred"].astype(str).to_numpy(),
-        figures_dir / f"query_on_atlas_umap_Level1_pred_{stem}.png",
+        plots_dir / f"query_on_atlas_umap_Level1_pred_{stem}.png",
         title="Query projected on atlas UMAP · Level_1_pred",
         dpi=dpi,
         palette_key="Level_1_Integrated",
@@ -318,12 +317,12 @@ def _atlas_umap_figures(
         bg_umap,
         q_umap,
         query.obs["Level_3_uncert"].to_numpy(dtype=float),
-        figures_dir / f"query_on_atlas_umap_uncertainty_{stem}.png",
+        plots_dir / f"query_on_atlas_umap_uncertainty_{stem}.png",
         dpi=dpi,
     )
     plot_composition_by_sample(
         query.obs,
-        figures_dir / f"query_Level2_composition_by_sample_{stem}.png",
+        plots_dir / f"query_Level2_composition_by_sample_{stem}.png",
         dpi=dpi,
         batch_key=batch_key,
     )
@@ -334,13 +333,13 @@ def _atlas_umap_figures(
         pd.concat([ref_comp, query_comp], ignore_index=True).to_csv(
             tables_dir / f"composition_Level_3_Integrated_{stem}.csv", index=False
         )
-        plot_composition(ref_comp, query_comp, figures_dir / f"composition_Level_3_Integrated_{stem}.png", dpi=dpi)
+        plot_composition(ref_comp, query_comp, plots_dir / f"composition_Level_3_Integrated_{stem}.png", dpi=dpi)
 
     if query_label_column and query_label_column in query.obs.columns:
         conf_df = plot_confusion(
             query.obs[query_label_column],
             query.obs["Level_3_pred"],
-            figures_dir / f"confusion_{query_label_column}_vs_Level_3_pred_{stem}.png",
+            plots_dir / f"confusion_{query_label_column}_vs_Level_3_pred_{stem}.png",
             dpi=dpi,
         )
         conf_df.to_csv(tables_dir / f"confusion_{query_label_column}_vs_Level_3_pred_{stem}.csv")
@@ -403,19 +402,18 @@ def project_query(
     query_label_column = query_label_column or cfg.get("query_label_column")
 
     projected_dir = out_root / cfg["projected_subdir"]
-    figures_dir = out_root / cfg["figures_subdir"]
+    plots_dir = out_root / cfg["plots_subdir"]
     tables_dir = out_root / cfg["tables_subdir"]
-    logs_dir = out_root / cfg["logs_subdir"]
     models_dir = out_root / cfg["models_subdir"] / "scpoli_query_surgery"
-    ckpt_dir = out_root / "checkpoints"
     converted_dir = out_root / "query_converted"
-    for d in (projected_dir, figures_dir, tables_dir, logs_dir, models_dir, ckpt_dir, converted_dir):
+    out_root.mkdir(parents=True, exist_ok=True)
+    for d in (projected_dir, plots_dir, tables_dir, models_dir, converted_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     stem = query_src.stem
     out_h5ad = projected_dir / f"{stem}_projected.h5ad"
     meta_json = projected_dir / f".{stem}_projected.meta.json"
-    _setup_logging_file(logs_dir / "projection.log")
+    _setup_logging_file(out_root / "projection.log")
 
     if not atlas_path.is_file():
         raise FileNotFoundError(f"Atlas h5ad not found: {atlas_path}")
@@ -529,7 +527,7 @@ def project_query(
             atlas_path=atlas_path,
             atlas_obs=atlas_obs,
             cfg=cfg,
-            figures_dir=figures_dir,
+            plots_dir=plots_dir,
             tables_dir=tables_dir,
             stem=stem,
             batch_key=batch_key,
@@ -550,8 +548,8 @@ def project_query(
             celltype_key=celltype_key,
             unknown_label=unknown_label,
             cfg=cfg,
-            ckpt_dir=ckpt_dir,
-            figures_dir=figures_dir,
+            projected_dir=projected_dir,
+            plots_dir=plots_dir,
             stem=stem,
             atlas_sub=atlas_sub,
         )

@@ -50,6 +50,7 @@ def _style_umap(ax, title: str) -> None:
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
+    ax.grid(False)
     for sp in ax.spines.values():
         sp.set_visible(False)
     ax.set_title(title, fontsize=11, pad=8)
@@ -111,8 +112,10 @@ def plot_overlay(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    plt.rcParams["axes.grid"] = False
     palette = _palette(query_labels, palette_key)
-    fig, ax = plt.subplots(figsize=(9, 7))
+    fig, ax = plt.subplots(figsize=(12.5, 7))
+    ax.grid(False)
     ax.scatter(ref_umap[:, 0], ref_umap[:, 1], s=2, c="#DDDDDD", rasterized=True, alpha=0.35, label="Atlas")
     lbl = query_labels.astype(str)
     cats = [c for c in pd.Categorical(lbl).categories if (lbl == c).any()]
@@ -131,7 +134,7 @@ def plot_overlay(
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
     ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=7, frameon=False)
-    fig.tight_layout(rect=(0, 0, 0.75, 1))
+    fig.tight_layout(rect=(0, 0, 0.82, 1))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -154,6 +157,7 @@ def plot_query_categorical(
 
     palette = _palette(pd.Series(labels), palette_key)
     fig, ax = plt.subplots(figsize=(11, 8))
+    ax.grid(False)
     ax.scatter(atlas_umap_bg[:, 0], atlas_umap_bg[:, 1], s=0.12, c="#DDDDDD", alpha=0.35, rasterized=True, linewidths=0)
     order = [x for x in LEVEL2_ORDER if x in set(labels)] + sorted(set(labels) - set(LEVEL2_ORDER))
     for lv in order:
@@ -193,6 +197,7 @@ def plot_similarity(
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 8))
+    ax.grid(False)
     ax.scatter(atlas_umap_bg[:, 0], atlas_umap_bg[:, 1], s=0.12, c="#DDDDDD", alpha=0.35, rasterized=True, linewidths=0)
     sc = ax.scatter(
         q_umap[:, 0],
@@ -260,6 +265,7 @@ def plot_uncertainty(
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 8))
+    ax.grid(False)
     ax.scatter(atlas_umap_bg[:, 0], atlas_umap_bg[:, 1], s=0.12, c="#DDDDDD", alpha=0.35, rasterized=True, linewidths=0)
     vmax = max(0.5, float(np.nanpercentile(uncert, 99)))
     sc = ax.scatter(
@@ -293,6 +299,7 @@ def plot_composition(ref_comp: pd.DataFrame, query_comp: pd.DataFrame, out_path:
     x = np.arange(len(labels))
     width = 0.35 if len(datasets) == 2 else 0.8 / max(len(datasets), 1)
     fig, ax = plt.subplots(figsize=(max(10, len(labels) * 0.45), 5))
+    ax.grid(False)
     for i, ds in enumerate(datasets):
         sub = merged[merged["dataset"] == ds].set_index("label").reindex(labels).fillna(0)
         offset = (i - (len(datasets) - 1) / 2) * width
@@ -333,6 +340,7 @@ def plot_composition_by_sample(
     bottom = np.zeros(len(comp_pct))
     x = np.arange(len(comp_pct))
     fig, ax = plt.subplots(figsize=(max(8, len(comp_pct) * 0.7), 5))
+    ax.grid(False)
     for col in comp_pct.columns:
         vals = comp_pct[col].to_numpy()
         ax.bar(x, vals, bottom=bottom, color=palette.get(str(col), "#999999"), width=0.75, label=str(col).replace("_", " "))
@@ -356,6 +364,7 @@ def plot_confusion(truth: pd.Series, predicted: pd.Series, out_path: Path, *, dp
 
     df = pd.crosstab(truth.astype(str), predicted.astype(str))
     fig, ax = plt.subplots(figsize=(max(6, df.shape[1] * 0.5), max(5, df.shape[0] * 0.5)))
+    ax.grid(False)
     im = ax.imshow(df.values, aspect="auto", cmap="Blues")
     ax.set_xticks(range(df.shape[1]))
     ax.set_yticks(range(df.shape[0]))
@@ -384,6 +393,8 @@ def plot_joint_umap_panels(lat, query_uncert: np.ndarray, out_path: Path, *, dpi
     q_mask = lat.obs["dataset_role"].astype(str).to_numpy() == "query"
     lat.obs.loc[q_mask, "uncert_plot"] = np.asarray(query_uncert, dtype=float)
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    for ax in axes:
+        ax.grid(False)
     sc.pl.umap(lat, color="dataset_role", ax=axes[0], show=False, frameon=False, title="Atlas vs query")
     sc.pl.umap(
         lat,

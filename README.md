@@ -131,7 +131,7 @@ Outputs are written under `--output`:
   Non-integrated UMAPs: `{output}/integration/nonintegrated/*.png`
   Method UMAPs: `{output}/integration/{harmony,rpca,cca}/*.png`
 - Projection (only with `--run-projection`): `{output}/projection/`
-  (`projected_obj/sct_prepared_projected.h5ad`, figures, tables)
+  (`projected_obj/sct_prepared_projected.h5ad`, plots, tables)
 
 Default `hkoca pipeline` stops at **integration**. Projection needs a GPU
 node and a pre-built `hkoca_projection` conda env (PyTorch + scArches from
@@ -230,7 +230,7 @@ hkoca projection map \
 Run surgery on a GPU node. RDS conversion uses `Rscript` from
 `hkoca_integration` (or `HKOCA_RSCRIPT`). Resume skips an existing projected
 h5ad; pass `--force` to re-run. Optional `--joint-umap` adds an exploratory
-joint latent UMAP (atlas subsample + query); default figures place the query on
+joint latent UMAP (atlas subsample + query); default plots place the query on
 the **fixed atlas UMAP** (`X_umap_scpoli`) by kNN in the shared surgery latent
 (atlas subsample re-encoded with the query model; atlas UMAP is never
 recomputed).
@@ -243,11 +243,11 @@ Outputs:
 - `projected_obj/<query>_projected.h5ad` — query with `X_scpoli`,
   `Level_3_pred` / `Level_2_pred` / `Level_1_pred`, `Level_3_uncert`
 - `tables/query_predictions_*.tsv`, `tables/projection_summary.json`
-- `figures/query_on_atlas_umap_*.png` — query on atlas UMAP (labels, similarity,
+- `plots/query_on_atlas_umap_*.png` — query on atlas UMAP (labels, similarity,
   uncertainty)
-- `figures/composition_*.png`, optional `figures/confusion_*.png`
+- `plots/composition_*.png`, optional `plots/confusion_*.png`
 - `models/scpoli_query_surgery/` — fine-tuned query embeddings
-- `logs/projection.log`
+- `projection.log`
 
 Packaged defaults: `hkoca projection --print-config`.
 
