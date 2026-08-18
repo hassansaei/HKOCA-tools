@@ -11,7 +11,7 @@ def projection_stack_available() -> bool:
     try:
         import torch  # noqa: F401
         from scarches.models.scpoli import scPoli  # noqa: F401
-    except ImportError:
+    except Exception:
         return False
     return True
 

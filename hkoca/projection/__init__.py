@@ -39,6 +39,28 @@ def _setup_logging(verbose: bool = False) -> None:
     logger.addHandler(handler)
 
 
+def _hop_to_projection_env(argv: list[str]) -> int | None:
+    """Run map in hkoca_projection once. Return None if already in that Python."""
+    import os
+    import subprocess
+    from pathlib import Path
+
+    from hkoca.conda_env import projection_subprocess_env
+
+    if os.environ.get("HKOCA_PROJECTION_INNER") == "1":
+        return None
+    try:
+        python, env = projection_subprocess_env()
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        return 1
+    if Path(python).resolve() == Path(sys.executable).resolve():
+        return None
+    env["HKOCA_PROJECTION_INNER"] = "1"
+    logger.info("Using conda env: %s", env.get("CONDA_PREFIX", ""))
+    return subprocess.run([python, "-m", "hkoca.projection", *argv], env=env).returncode
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hkoca projection",
@@ -212,17 +234,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not projection_stack_available():
-        import subprocess
-
-        from hkoca.conda_env import projection_subprocess_env
-
-        try:
-            python, env = projection_subprocess_env()
-        except FileNotFoundError as exc:
-            logger.error("%s", exc)
-            return 1
-        logger.info("Using conda env: %s", env.get("CONDA_PREFIX", ""))
-        return subprocess.run([python, "-m", "hkoca.projection", *argv], env=env).returncode
+        hopped = _hop_to_projection_env(argv)
+        if hopped is not None:
+            return hopped
 
     try:
         out_path = project_query(
