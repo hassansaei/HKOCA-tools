@@ -80,7 +80,7 @@ def load_projection_config(
         "condition_key": reference.get("condition_key") or "sample_id",
         "unknown_label": reference.get("unknown_label") or "Unknown",
         "atlas_umap_key": reference.get("atlas_umap_key") or "X_umap_scpoli",
-        "atlas_latent_key": reference.get("atlas_latent_key") or "X_scpoli",
+        "atlas_latent_key": reference.get("atlas_latent_key") or "X_emb",
         "prototype_map": prototype_map,
         "n_epochs": int(scpoli.get("n_epochs") or 50),
         "pretrain_epochs": int(scpoli.get("pretrain_epochs") or 40),
@@ -98,4 +98,5 @@ def load_projection_config(
         "atlas_umap_subsample": int(plotting.get("atlas_umap_subsample") or 80000),
         "knn_neighbors": int(plotting.get("knn_neighbors") or 30),
         "atlas_bg_max": int(plotting.get("atlas_bg_max") or 120000),
+        "min_mean_similarity": float(plotting.get("min_mean_similarity") or 0.01),
     }

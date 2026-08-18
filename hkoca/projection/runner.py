@@ -29,6 +29,7 @@ from hkoca.projection.query_io import ensure_sample_id, load_query_adata
 from hkoca.projection.scpoli import (
     align_to_reference_genes,
     classify_safe,
+    ensure_query_condition_columns,
     ensure_raw_counts,
     get_latent_safe,
     load_atlas_obs,
@@ -39,7 +40,6 @@ from hkoca.projection.scpoli import (
     majority_map,
     patch_anndata_for_scarches,
     read_atlas_obsm,
-    resolve_atlas_latent_key,
     scpoli_placeholder_col,
     train_query_model,
     validate_model_dir,
@@ -114,6 +114,53 @@ def _write_prediction_tables(query, tables_dir: Path, stem: str, batch_key: str)
         comp.to_csv(comp_path, sep="\t", index=False)
 
 
+def _encode_atlas_anchor_with_surgery(
+    *,
+    model,
+    atlas_path: Path,
+    atlas_obs: pd.DataFrame,
+    ref_genes: list[str],
+    placeholder_col: str,
+    unknown_label: str,
+    cfg: dict[str, Any],
+):
+    """Encode an atlas subsample with the query surgery model.
+
+    Stored atlas X_emb is from the pre-surgery reference encoder. After
+    surgery those coordinates are a different space than query X_scpoli.
+    Re-encoding atlas cells with the surgery model (original atlas
+    conditions) puts both on the same latent so kNN can transfer frozen
+    X_umap_scpoli coordinates. Atlas UMAP is never recomputed.
+    """
+    rng = np.random.default_rng(cfg["seed"])
+    n_atlas = atlas_obs.shape[0]
+    n_take = min(int(cfg["atlas_umap_subsample"]), n_atlas)
+    atlas_sub_idx = np.sort(rng.choice(n_atlas, size=n_take, replace=False))
+    atlas_sub_barcodes = atlas_obs.index.to_numpy()[atlas_sub_idx]
+    atlas_obs_sub = atlas_obs.iloc[atlas_sub_idx].copy()
+    atlas_obs_sub["dataset_role"] = "atlas"
+    logger.info(
+        "Encoding atlas subsample with query surgery model (%s cells) for frozen UMAP overlay",
+        f"{n_take:,}",
+    )
+    atlas_sub = load_atlas_subsample_h5py(
+        atlas_path, atlas_sub_idx, atlas_obs_sub, atlas_sub_barcodes, ref_genes
+    )
+    atlas_sub.obs[placeholder_col] = unknown_label
+    atlas_sub.obs[placeholder_col] = atlas_sub.obs[placeholder_col].astype("category")
+    for cond in model.condition_keys_:
+        if cond not in atlas_sub.obs.columns:
+            raise KeyError(
+                f"Atlas missing scPoli condition column {cond!r} needed to encode "
+                "atlas anchors with the surgery model."
+            )
+        atlas_sub.obs[cond] = atlas_sub.obs[cond].astype(str).astype("category")
+    atlas_sub.obsm["X_scpoli"] = np.asarray(
+        get_latent_safe(model, atlas_sub, mean=True), dtype=np.float32
+    )
+    return atlas_sub, atlas_sub_idx
+
+
 def _maybe_joint_umap(
     *,
     query,
@@ -129,26 +176,21 @@ def _maybe_joint_umap(
     ckpt_dir: Path,
     figures_dir: Path,
     stem: str,
+    atlas_sub=None,
 ):
     import anndata as ad
     import scanpy as sc
 
-    rng = np.random.default_rng(cfg["seed"])
-    n_atlas = atlas_obs.shape[0]
-    n_take = min(int(cfg["atlas_umap_subsample"]), n_atlas)
-    atlas_sub_idx = np.sort(rng.choice(n_atlas, size=n_take, replace=False))
-    atlas_sub_barcodes = atlas_obs.index.to_numpy()[atlas_sub_idx]
-    atlas_obs_sub = atlas_obs.iloc[atlas_sub_idx].copy()
-    atlas_obs_sub["dataset_role"] = "atlas"
-    logger.info("Joint UMAP: loading atlas subsample counts (%s cells)", f"{n_take:,}")
-    atlas_sub = load_atlas_subsample_h5py(
-        atlas_path, atlas_sub_idx, atlas_obs_sub, atlas_sub_barcodes, ref_genes
-    )
-    atlas_sub.obs[placeholder_col] = unknown_label
-    atlas_sub.obs[placeholder_col] = atlas_sub.obs[placeholder_col].astype("category")
-    atlas_sub.obs[condition_key] = atlas_sub.obs[condition_key].astype(str).astype("category")
-    a_latent = np.asarray(get_latent_safe(model, atlas_sub, mean=True), dtype=np.float32)
-    atlas_sub.obsm["X_scpoli"] = a_latent
+    if atlas_sub is None:
+        atlas_sub, _ = _encode_atlas_anchor_with_surgery(
+            model=model,
+            atlas_path=atlas_path,
+            atlas_obs=atlas_obs,
+            ref_genes=ref_genes,
+            placeholder_col=placeholder_col,
+            unknown_label=unknown_label,
+            cfg=cfg,
+        )
     lat = ad.AnnData(X=np.vstack([atlas_sub.obsm["X_scpoli"], query.obsm["X_scpoli"]]))
     lat.obs = pd.concat(
         [
@@ -191,22 +233,35 @@ def _atlas_umap_figures(
     stem: str,
     batch_key: str,
     query_label_column: str | None,
+    atlas_sub,
+    atlas_sub_idx: np.ndarray,
 ) -> dict[str, Any]:
-    latent_key = resolve_atlas_latent_key(atlas_path, cfg["atlas_latent_key"])
     umap_key = cfg["atlas_umap_key"]
-    atlas_lat = read_atlas_obsm(atlas_path, latent_key) if latent_key else None
     atlas_umap = read_atlas_obsm(atlas_path, umap_key)
-    if atlas_lat is None or atlas_umap is None:
+    if atlas_umap is None:
         logger.warning(
-            "Atlas missing %s and/or %s; skipping atlas-UMAP overlay figures.",
-            latent_key or cfg["atlas_latent_key"],
+            "Atlas missing %s; skipping atlas-UMAP overlay figures.",
             umap_key,
         )
         return {}
 
+    atlas_lat = np.asarray(atlas_sub.obsm["X_scpoli"], dtype=np.float32)
+    atlas_umap_anchor = np.asarray(atlas_umap[atlas_sub_idx], dtype=np.float32)
     q_lat = np.asarray(query.obsm["X_scpoli"], dtype=np.float32)
+    if q_lat.shape[1] != atlas_lat.shape[1]:
+        raise ValueError(
+            f"Query scPoli latent dim {q_lat.shape[1]} does not match surgery-"
+            f"encoded atlas latent dim {atlas_lat.shape[1]}."
+        )
+    logger.info(
+        "Projecting query onto frozen atlas UMAP %s by kNN in surgery latent "
+        "(query %s, atlas anchors %s)",
+        umap_key,
+        q_lat.shape,
+        atlas_lat.shape,
+    )
     q_umap, sim, d_ref = knn_project_onto_atlas_umap(
-        atlas_lat, atlas_umap, q_lat, k=cfg["knn_neighbors"]
+        atlas_lat, atlas_umap_anchor, q_lat, k=cfg["knn_neighbors"]
     )
     query.obsm["X_umap_scpoli_projected"] = q_umap
     query.obs["atlas_similarity"] = sim
@@ -292,9 +347,9 @@ def _atlas_umap_figures(
 
     sim_stats = {
         "n_query_cells": int(len(sim)),
-        "n_atlas_cells": int(atlas_lat.shape[0]),
+        "n_atlas_anchor_cells": int(atlas_lat.shape[0]),
         "k_neighbors": int(cfg["knn_neighbors"]),
-        "atlas_latent_key": latent_key,
+        "atlas_latent_key": "surgery_X_scpoli",
         "atlas_umap_key": umap_key,
         "atlas_latent_calib_dist_p95": float(d_ref),
         "mean_similarity": float(sim.mean()),
@@ -303,9 +358,10 @@ def _atlas_umap_figures(
         "pct_ge_70": float((sim >= 0.70).mean() * 100),
         "pct_ge_85": float((sim >= 0.85).mean() * 100),
         "note": (
-            "Query cells are embedded with scPoli surgery, then placed on the "
-            "fixed atlas UMAP (X_umap_scpoli) by kNN in latent space. "
-            "Level_3_uncert is scaled per query batch (relative)."
+            "Query and an atlas subsample are encoded with the query surgery "
+            "model. Query cells are placed on the fixed atlas UMAP "
+            "(X_umap_scpoli) by kNN in that shared latent. Atlas UMAP is "
+            "never recomputed. Level_3_uncert is scaled per query batch."
         ),
     }
     (tables_dir / f"atlas_query_similarity_summary_{stem}.json").write_text(
@@ -383,13 +439,15 @@ def project_query(
     query_raw = load_query_adata(query_src, converted_h5ad=converted_h5ad, force=force)
     logger.info("Query: %s cells x %s genes", f"{query_raw.n_obs:,}", f"{query_raw.n_vars:,}")
     query_raw = ensure_sample_id(query_raw, fallback=stem, batch_key=batch_key)
+    ensure_query_condition_columns(
+        query_raw, model_path, batch_key=batch_key, study_fallback=stem
+    )
     if condition_key != batch_key and condition_key not in query_raw.obs.columns:
         query_raw.obs[condition_key] = query_raw.obs[batch_key].astype(str)
     query_raw.obs[condition_key] = query_raw.obs[condition_key].astype(str).astype("category")
-    if "study" not in query_raw.obs.columns:
-        query_raw.obs["study"] = stem
 
     ref_genes = load_reference_genes(model_path)
+    logger.info("Reference model genes (var_names.csv): %s", f"{len(ref_genes):,}")
     placeholder_col = scpoli_placeholder_col(model_path)
     query = ensure_raw_counts(query_raw, prefer_layer=counts_layer)
     query = align_to_reference_genes(query, ref_genes)
@@ -453,6 +511,18 @@ def project_query(
     logger.info("Mean Level_3_uncert: %.4f", float(np.mean(query.obs["Level_3_uncert"])))
 
     sim_stats: dict[str, Any] = {}
+    atlas_sub = None
+    atlas_sub_idx = None
+    if cfg.get("save_plots", True) or cfg.get("joint_umap"):
+        atlas_sub, atlas_sub_idx = _encode_atlas_anchor_with_surgery(
+            model=scpoli_query,
+            atlas_path=atlas_path,
+            atlas_obs=atlas_obs,
+            ref_genes=ref_genes,
+            placeholder_col=placeholder_col,
+            unknown_label=unknown_label,
+            cfg=cfg,
+        )
     if cfg.get("save_plots", True):
         sim_stats = _atlas_umap_figures(
             query=query,
@@ -464,6 +534,8 @@ def project_query(
             stem=stem,
             batch_key=batch_key,
             query_label_column=query_label_column,
+            atlas_sub=atlas_sub,
+            atlas_sub_idx=atlas_sub_idx,
         )
 
     if cfg.get("joint_umap"):
@@ -481,15 +553,13 @@ def project_query(
             ckpt_dir=ckpt_dir,
             figures_dir=figures_dir,
             stem=stem,
+            atlas_sub=atlas_sub,
         )
 
     query.uns["projection_atlas"] = str(atlas_path)
     query.uns["projection_query"] = str(query_src)
     query.uns["projection_model"] = str(model_path)
     query.uns["projection_method"] = "scpoli_surgery"
-    logger.info("Saving projected query: %s", out_h5ad)
-    query.write_h5ad(out_h5ad, compression="gzip")
-    _write_prediction_tables(query, tables_dir, stem, batch_key)
 
     summary = {
         "atlas_h5ad": str(atlas_path),
@@ -504,7 +574,25 @@ def project_query(
         "cuda": bool(torch.cuda.is_available()),
         "mean_Level_3_uncert": float(np.mean(query.obs["Level_3_uncert"])),
         "similarity": sim_stats,
+        "atlas_umap_frozen": True,
     }
+
+    min_sim = float(cfg.get("min_mean_similarity") or 0.0)
+    mean_sim = sim_stats.get("mean_similarity") if sim_stats else None
+    if min_sim > 0 and mean_sim is not None and float(mean_sim) < min_sim:
+        (tables_dir / "projection_summary.json").write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
+        raise RuntimeError(
+            f"Query did not land on the frozen atlas UMAP (mean similarity "
+            f"{float(mean_sim):.4f} < {min_sim}). Overlay kNN uses surgery-"
+            f"encoded atlas anchors mapped to {sim_stats.get('atlas_umap_key')}. "
+            "Atlas X_umap_scpoli is never recomputed."
+        )
+
+    logger.info("Saving projected query: %s", out_h5ad)
+    query.write_h5ad(out_h5ad, compression="gzip")
+    _write_prediction_tables(query, tables_dir, stem, batch_key)
     (tables_dir / "projection_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     meta_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     logger.info("Projection completed. Outputs under: %s", out_root)

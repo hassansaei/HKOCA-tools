@@ -137,7 +137,7 @@ def align_to_reference_genes(adata, ref_genes: list[str]):
     return aligned
 
 
-def scpoli_placeholder_col(model_dir: Path) -> str:
+def load_model_attrs(model_dir: Path) -> dict[str, Any]:
     import torch
 
     with open(Path(model_dir) / "attr.pkl", "rb") as fh:
@@ -156,7 +156,51 @@ def scpoli_placeholder_col(model_dir: Path) -> str:
             return super().find_class(module, name)
 
     attrs = _CPUUnpickler(io.BytesIO(blob)).load()
+    if not isinstance(attrs, dict):
+        raise TypeError(f"attr.pkl in {model_dir} is not a mapping")
+    return attrs
+
+
+def scpoli_placeholder_col(model_dir: Path) -> str:
+    attrs = load_model_attrs(model_dir)
     return attrs["cell_type_keys_"][0]
+
+
+def load_model_condition_keys(model_dir: Path) -> list[str]:
+    attrs = load_model_attrs(model_dir)
+    keys = attrs.get("condition_keys_") or []
+    if isinstance(keys, str):
+        return [keys]
+    return [str(k) for k in keys]
+
+
+def ensure_query_condition_columns(
+    adata,
+    model_dir: Path,
+    *,
+    batch_key: str,
+    study_fallback: str,
+):
+    """Fill obs columns required by the reference model (typically study + sample_id)."""
+    keys = load_model_condition_keys(model_dir)
+    if not keys:
+        keys = [batch_key]
+    for key in keys:
+        if key in adata.obs.columns:
+            adata.obs[key] = adata.obs[key].astype(str)
+            continue
+        if key in {"study", "Study"}:
+            adata.obs[key] = str(study_fallback)
+            logger.info("Set obs[%r] = %r for scPoli surgery conditions", key, study_fallback)
+            continue
+        if key == batch_key:
+            raise ValueError(f"Query missing required batch column {batch_key!r}")
+        raise ValueError(
+            f"Query missing scPoli condition column {key!r} required by {model_dir}. "
+            f"Present obs columns: {list(adata.obs.columns)}"
+        )
+    logger.info("scPoli reference condition keys: %s", keys)
+    return keys
 
 
 def load_reference_genes(model_dir: Path) -> list[str]:
@@ -354,14 +398,48 @@ def read_atlas_obsm(atlas_h5ad: Path, key: str) -> np.ndarray | None:
     with h5py.File(Path(atlas_h5ad), "r") as fh:
         if "obsm" not in fh or key not in fh["obsm"]:
             return None
-        return np.asarray(fh["obsm"][key][:], dtype=np.float32)
+        obj = fh["obsm"][key]
+        if not hasattr(obj, "shape"):
+            return None
+        return np.asarray(obj[:], dtype=np.float32)
 
 
-def resolve_atlas_latent_key(atlas_h5ad: Path, preferred: str = "X_scpoli") -> str | None:
-    for key in (preferred, "X_scpoli", "X_emb"):
+def list_atlas_obsm_keys(atlas_h5ad: Path) -> list[str]:
+    import h5py
+
+    with h5py.File(Path(atlas_h5ad), "r") as fh:
+        if "obsm" not in fh:
+            return []
+        return list(fh["obsm"].keys())
+
+
+def resolve_atlas_latent_key(atlas_h5ad: Path, preferred: str = "X_emb") -> str | None:
+    """Return a stored atlas latent key if present (X_emb or X_scpoli).
+
+    Frozen UMAP overlay does not use this stored latent. After surgery, query
+    X_scpoli is in a different encoder state than pre-surgery X_emb, so overlay
+    re-encodes an atlas subsample with the surgery model instead.
+    """
+    seen: list[str] = []
+    for key in (preferred, "X_emb", "X_scpoli"):
+        if key in seen:
+            continue
+        seen.append(key)
         arr = read_atlas_obsm(atlas_h5ad, key)
         if arr is not None:
+            if key != "X_scpoli":
+                logger.info(
+                    "Atlas scPoli latent for frozen UMAP overlay: %s %s (obsm keys: %s)",
+                    key,
+                    arr.shape,
+                    list_atlas_obsm_keys(atlas_h5ad),
+                )
             return key
+    logger.warning(
+        "No atlas latent among %s. Available obsm: %s",
+        seen,
+        list_atlas_obsm_keys(atlas_h5ad),
+    )
     return None
 
 

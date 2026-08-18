@@ -1,5 +1,11 @@
 # Default HKOCA atlas projection config (scPoli surgery).
 # CLI flags override these values.
+#
+# Overlay keeps the atlas UMAP frozen (X_umap_scpoli). Query cells are placed
+# on it by kNN after encoding an atlas subsample with the same query surgery
+# model (not stored atlas X_emb). --model-dir must be the reference model
+# trained for this atlas (same var_names and condition keys, typically
+# study + sample_id).
 
 paths:
   atlas_h5ad: null
@@ -17,7 +23,7 @@ reference:
   condition_key: sample_id
   unknown_label: Unknown
   atlas_umap_key: X_umap_scpoli
-  atlas_latent_key: X_scpoli
+  atlas_latent_key: X_emb
 
 scpoli:
   n_epochs: 50
@@ -40,3 +46,4 @@ plotting:
   atlas_umap_subsample: 80000
   knn_neighbors: 30
   atlas_bg_max: 120000
+  min_mean_similarity: 0.01

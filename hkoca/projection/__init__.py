@@ -98,13 +98,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--atlas-h5ad",
         dest="atlas_h5ad",
         default=None,
-        help="HKOCA atlas .h5ad (Level_*_Integrated labels, X_scpoli / X_umap_scpoli)",
+        help="HKOCA atlas .h5ad (frozen X_umap_scpoli)",
     )
     p_map.add_argument(
         "--model-dir",
         dest="model_dir",
         default=None,
-        help="scPoli reference model directory (model_params.pt, attr.pkl, var_names.csv)",
+        help="scPoli reference model for this atlas (model_params.pt, attr.pkl, var_names.csv)",
     )
     p_map.add_argument(
         "--output-dir",

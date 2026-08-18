@@ -210,9 +210,10 @@ Provide:
 - `--query` — integration prep `sct_prepared.rds` (RNA counts are exported; SCT
   residuals are not used) or a query `.h5ad` with raw UMIs in `layers['counts']`
   or `.X`, gene symbols in `var_names`, and `obs['sample_id']`
-- `--atlas` — HKOCA atlas `.h5ad` (`Level_*_Integrated`, `X_scpoli` /
-  `X_umap_scpoli`)
-- `--model-dir` — scPoli weights (`model_params.pt`, `attr.pkl`, `var_names.csv`)
+- `--atlas` — HKOCA atlas `.h5ad` (`Level_*_Integrated`, frozen `X_umap_scpoli`)
+- `--model-dir` — the **same** scPoli reference weights used for the atlas
+  (`model_params.pt`, `attr.pkl`, `var_names.csv`). A different gene set
+  will not land on the frozen UMAP.
 
 ```bash
 conda env create -f conda/environment_projection.yaml
@@ -230,7 +231,9 @@ Run surgery on a GPU node. RDS conversion uses `Rscript` from
 `hkoca_integration` (or `HKOCA_RSCRIPT`). Resume skips an existing projected
 h5ad; pass `--force` to re-run. Optional `--joint-umap` adds an exploratory
 joint latent UMAP (atlas subsample + query); default figures place the query on
-the **fixed atlas UMAP** by kNN in scPoli latent space.
+the **fixed atlas UMAP** (`X_umap_scpoli`) by kNN in the shared surgery latent
+(atlas subsample re-encoded with the query model; atlas UMAP is never
+recomputed).
 
 `Level_3_uncert` is prototype uncertainty scaled per query batch (0 = confident,
 1 = uncertain; relative, not an absolute atlas-wide score).
