@@ -77,6 +77,7 @@ LABEL org.opencontainers.image.title="HKOCA" \
 ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_AUTO_UPDATE_CONDA=FALSE \
     HKOCA_ENV=hkoca_harmonize \
+    HKOCA_ROOT=/opt/hkoca \
     PATH=/opt/conda/envs/hkoca_harmonize/bin:$PATH \
     DEFAULT_INPUT_DIR=/opt/hkoca/input \
     DEFAULT_OUTPUT_DIR=/opt/hkoca/output
@@ -99,17 +100,16 @@ COPY --from=envs /opt/conda/envs /opt/conda/envs
 
 WORKDIR /opt/hkoca
 
-# Application source from the build context (not a git clone), so the image
-# matches the commit being built. --no-deps: stage deps live in conda envs.
+# Keep the source tree at /opt/hkoca so sibling conda envs can import hkoca via
+# HKOCA_ROOT/PYTHONPATH without installing the package into each env.
+# --no-deps: stage deps live in conda envs; CLI is installed only in harmonize.
 COPY pyproject.toml README.md ./
 COPY hkoca/ ./hkoca/
-RUN install -d /etc/hkoca && \
-    conda run -n hkoca_harmonize pip install --no-cache-dir --no-deps . && \
-    conda run -n hkoca_harmonize python -c "import hkoca, pathlib; print(pathlib.Path(hkoca.__file__).resolve().parent.parent)" > /etc/hkoca/HKOCA_ROOT && \
+ENV HKOCA_ROOT=/opt/hkoca
+RUN conda run -n hkoca_harmonize pip install --no-cache-dir --no-deps . && \
     conda run -n hkoca_harmonize hkoca --version && \
     conda clean -afy && \
-    rm -rf /opt/hkoca/hkoca /opt/hkoca/pyproject.toml /opt/hkoca/README.md \
-           /opt/hkoca/*.egg-info /opt/hkoca/build 2>/dev/null || true
+    rm -rf /opt/hkoca/*.egg-info /opt/hkoca/build 2>/dev/null || true
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

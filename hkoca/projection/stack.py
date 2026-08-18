@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 PROJECTION_ENV_HINT = (
-    "The hkoca_projection conda env must be built ahead of time from "
-    "conda/environment_projection.yaml (PyTorch + scArches). "
-    "hkoca is shared from the harmonize install via PYTHONPATH; "
-    "do not pip install packages when running the pipeline."
+    "This step runs in the hkoca_projection conda env (PyTorch + scArches)."
 )
 
 

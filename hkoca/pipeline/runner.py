@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 
-from hkoca.conda_env import probe_projection_subprocess, projection_subprocess_env
+from hkoca.conda_env import projection_subprocess_env
 
 from hkoca.pipeline.checkpoints import (
     annotation_complete,
@@ -354,8 +354,6 @@ def run_projection_stage(
     force: bool = False,
     verbose: bool = False,
 ) -> int:
-    from hkoca.projection.stack import PROJECTION_ENV_HINT
-
     if resume and not force:
         ok, reason = projection_stage_complete(cfg, df)
         if ok:
@@ -372,24 +370,12 @@ def run_projection_stage(
     python = "python"
     env = os.environ.copy()
     if not dry_run:
-        ok, detail = probe_projection_subprocess()
-        if not ok:
-            logger.error(
-                "Projection env is not ready (%s). %s",
-                detail,
-                PROJECTION_ENV_HINT,
-            )
-            return 1
         try:
             python, env = projection_subprocess_env()
         except FileNotFoundError as exc:
             logger.error("%s", exc)
             return 1
-        logger.info(
-            "Using projection env: %s (hkoca via PYTHONPATH=%s)",
-            env.get("CONDA_PREFIX", ""),
-            env.get("HKOCA_ROOT", env.get("PYTHONPATH", "")),
-        )
+        logger.info("Using conda env: %s", env.get("CONDA_PREFIX", ""))
 
     for row in artifacts:
         study = row["study"]
@@ -443,12 +429,7 @@ def run_projection_stage(
         logger.info("Projection command: %s", " ".join(argv))
         proc = subprocess.run(argv, check=False, env=env)
         if proc.returncode != 0:
-            logger.error(
-                "Projection failed for study '%s' (exit %s). %s",
-                study,
-                proc.returncode,
-                PROJECTION_ENV_HINT,
-            )
+            logger.error("Projection failed for study '%s' (exit %s).", study, proc.returncode)
             return int(proc.returncode)
 
     if dry_run:

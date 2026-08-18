@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 # Names must match ``name:`` in conda/environment_*.yaml
@@ -68,13 +67,43 @@ def resolve_env_prefix(env_name: str, executable: str) -> Path | None:
     return None
 
 
+def _is_site_packages(path: Path) -> bool:
+    return path.name in {"site-packages", "dist-packages"}
+
+
+def _looks_like_hkoca_root(path: Path) -> bool:
+    return (path / "hkoca" / "__init__.py").is_file() and not _is_site_packages(path)
+
+
+def _sanitize_ld_library_path(existing: str, prefix: Path) -> str:
+    """Prefer ``prefix/lib`` (conda libstdc++) and drop other env lib dirs."""
+    prefix_s = str(prefix.resolve())
+    parts = [str(prefix / "lib")]
+    for item in existing.split(os.pathsep):
+        if not item:
+            continue
+        if item in parts:
+            continue
+        if "/envs/" in item.replace("\\", "/") and not item.startswith(prefix_s):
+            continue
+        parts.append(item)
+    return os.pathsep.join(parts)
+
+
 def subprocess_env_for_prefix(prefix: Path) -> dict[str, str]:
     """Run a subprocess with ``prefix/bin`` on PATH and CONDA_PREFIX set."""
     env = os.environ.copy()
     bin_dir = prefix / "bin"
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     env["CONDA_PREFIX"] = str(prefix)
+    env["CONDA_DEFAULT_ENV"] = prefix.name
     env.pop("PYTHONHOME", None)
+    env["PYTHONNOUSERSITE"] = "1"
+    env["LD_LIBRARY_PATH"] = _sanitize_ld_library_path(
+        env.get("LD_LIBRARY_PATH", ""), prefix
+    )
+    # Do not inherit another env's site-packages via PYTHONPATH.
+    env.pop("PYTHONPATH", None)
 
     py = bin_dir / "python"
     if py.is_file():
@@ -114,7 +143,8 @@ def python_env(env_name: str, *, need_hkoca: bool = False) -> tuple[str, dict[st
     prefix = resolve_env_prefix(env_name, "python")
     if prefix is None:
         raise FileNotFoundError(
-            f"Conda env '{env_name}' not found. Create it from conda/environment_*.yaml."
+            f"Conda env '{env_name}' not found. It must already exist "
+            f"(conda/environment_*.yaml); the pipeline will not create or install it."
         )
     python = str(prefix / "bin" / "python")
     env = subprocess_env_for_prefix(prefix)
@@ -123,65 +153,82 @@ def python_env(env_name: str, *, need_hkoca: bool = False) -> tuple[str, dict[st
     return python, env
 
 
+def _conda_prefix_from_path(path: Path) -> Path | None:
+    for parent in path.resolve().parents:
+        if (parent / "conda-meta").is_dir():
+            return parent
+    return None
+
+
+def _isolated_hkoca_share(pkg_dir: Path) -> Path:
+    """PYTHONPATH dir that contains only ``hkoca``, never a full site-packages tree."""
+    explicit = os.environ.get("HKOCA_SHARE", "").strip()
+    if explicit:
+        share = Path(explicit).expanduser().resolve()
+    else:
+        prefix = _conda_prefix_from_path(pkg_dir)
+        if prefix is not None:
+            share = prefix / "share" / "hkoca-pythonpath"
+        else:
+            share = Path.home() / ".cache" / "hkoca" / "pythonpath"
+    share.mkdir(parents=True, exist_ok=True)
+    link = share / "hkoca"
+    target = pkg_dir.resolve()
+    if link.exists() or link.is_symlink():
+        try:
+            if link.resolve() != target:
+                link.unlink()
+                link.symlink_to(target)
+        except OSError:
+            if not link.is_dir():
+                raise
+    else:
+        link.symlink_to(target)
+    return share
+
+
 def hkoca_source_root() -> Path:
-    """Directory that contains the ``hkoca`` package (repo root for editable installs)."""
+    """Directory to put on PYTHONPATH so other envs can ``import hkoca``.
+
+    Must be a repo-style root (contains ``hkoca/``) or an isolated share with a
+    ``hkoca`` symlink. Never a ``site-packages`` directory: that would leak
+    numpy/torch from hkoca_harmonize into hkoca_projection.
+    """
     override = os.environ.get("HKOCA_ROOT", "").strip()
     if override:
-        return Path(override).resolve()
+        root = Path(override).expanduser().resolve()
+        if _looks_like_hkoca_root(root):
+            return root
+
     import hkoca
 
-    return Path(hkoca.__file__).resolve().parent.parent
+    pkg = Path(hkoca.__file__).resolve().parent
+    parent = pkg.parent
+    if _looks_like_hkoca_root(parent):
+        return parent
+
+    for candidate in (Path("/opt/HKOCA-tools"), Path("/opt/hkoca")):
+        if _looks_like_hkoca_root(candidate):
+            return candidate.resolve()
+
+    return _isolated_hkoca_share(pkg)
 
 
 def wire_hkoca_pythonpath(env: dict[str, str]) -> dict[str, str]:
-    """Append HKOCA_ROOT / package root so stage envs can import hkoca without reinstall."""
+    """Set PYTHONPATH to the shared hkoca root only (no other env site-packages)."""
     root = str(hkoca_source_root())
-    existing = env.get("PYTHONPATH", "").strip()
-    if root not in existing.split(os.pathsep):
-        env["PYTHONPATH"] = root if not existing else f"{root}{os.pathsep}{existing}"
+    env["PYTHONPATH"] = root
     env["HKOCA_ROOT"] = root
     return env
 
 
 def ensure_hkoca_on_pythonpath(env: dict[str, str], python: str) -> dict[str, str]:
     """Ensure ``hkoca`` is importable in a stage-specific conda env subprocess."""
-    probe = subprocess.run(
-        [python, "-c", "import hkoca"],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    if probe.returncode == 0:
-        return env
     return wire_hkoca_pythonpath(env)
 
 
 def projection_subprocess_env() -> tuple[str, dict[str, str]]:
-    """Python + env for hkoca_projection with shared hkoca on PYTHONPATH."""
+    """Python + env for the hkoca_projection conda env."""
     env_name = os.environ.get("HKOCA_PROJECTION_ENV", ENV_PROJECTION).strip() or ENV_PROJECTION
     python, env = python_env(env_name, need_hkoca=True)
     return python, env
-
-
-def probe_projection_subprocess() -> tuple[bool, str]:
-    """Return whether hkoca_projection can import torch, scarches, and hkoca.projection."""
-    try:
-        python, env = projection_subprocess_env()
-    except FileNotFoundError:
-        env_name = os.environ.get("HKOCA_PROJECTION_ENV", ENV_PROJECTION).strip() or ENV_PROJECTION
-        return False, f"conda env '{env_name}' not found"
-    proc = subprocess.run(
-        [
-            python,
-            "-c",
-            "import torch; from scarches.models.scpoli import scPoli; "
-            "import hkoca.projection  # noqa: F401",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode == 0:
-        return True, "ok"
-    err = (proc.stderr or proc.stdout or "").strip()
-    return False, err.splitlines()[-1] if err else "projection env probe failed"

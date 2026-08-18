@@ -35,8 +35,6 @@ def main(argv: list[str] | None = None) -> int:
             "  annotation   Cell-type annotation\n"
             "  integration  Batch integration (Harmony / RPCA / CCA)\n"
             "  projection   Map query onto the HKOCA atlas (scPoli)\n"
-            "\n"
-            "  verify-envs  Check conda envs and cross-stage tool access\n"
         ),
     )
     parser.add_argument(
@@ -64,11 +62,6 @@ def main(argv: list[str] | None = None) -> int:
         if not argv:
             parser.print_help()
         return 0
-
-    if argv[0] == "verify-envs":
-        from hkoca.env_verify import main as verify_main
-
-        return int(verify_main(argv[1:]) or 0)
 
     command, rest = argv[0], argv[1:]
     if command not in _COMMANDS:

@@ -6,9 +6,9 @@ Chains stage modules in order:
     -> projection (optional, GPU)
 
 Projection is off by default. Pass ``--run-projection`` (or set
-``run_projection = true`` in pipeline.config) on a GPU node with
-``hkoca_projection`` installed. Atlas h5ad and scPoli ``--model-dir``
-are required when projection is enabled.
+``run_projection = true`` in pipeline.config) on a GPU node. The stage
+uses the ``hkoca_projection`` conda env. Atlas h5ad and scPoli
+``--model-dir`` are required when projection is enabled.
 
 The sample_info CSV drives CellBender sample selection and harmonization
 metadata. Use ``--skip-cellbender`` or per-row ``run_cellbender=False`` to

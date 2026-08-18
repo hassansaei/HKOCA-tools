@@ -17,9 +17,7 @@ esac
 source /opt/conda/etc/profile.d/conda.sh
 conda activate "${HKOCA_ENV}"
 
-if [[ -f /etc/hkoca/HKOCA_ROOT ]]; then
-    export HKOCA_ROOT="$(cat /etc/hkoca/HKOCA_ROOT)"
-fi
+export HKOCA_ROOT="${HKOCA_ROOT:-/opt/hkoca}"
 
 # Default: treat argv as hkoca subcommands/flags.
 # Use `--` to run an arbitrary command inside the env, e.g.:

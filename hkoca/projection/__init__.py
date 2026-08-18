@@ -211,26 +211,17 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Dry run: projection map would run in hkoca_projection (scPoli surgery).")
         return 0
 
-    if not args.dry_run and not projection_stack_available():
+    if not projection_stack_available():
         import subprocess
 
-        from hkoca.conda_env import probe_projection_subprocess, projection_subprocess_env
-        from hkoca.projection.stack import PROJECTION_ENV_HINT
+        from hkoca.conda_env import projection_subprocess_env
 
-        ok, detail = probe_projection_subprocess()
-        if not ok:
-            logger.error(
-                "Projection env is not ready (%s). %s",
-                detail,
-                PROJECTION_ENV_HINT,
-            )
+        try:
+            python, env = projection_subprocess_env()
+        except FileNotFoundError as exc:
+            logger.error("%s", exc)
             return 1
-        python, env = projection_subprocess_env()
-        logger.info(
-            "Delegating to hkoca_projection (%s; hkoca via HKOCA_ROOT=%s)",
-            env.get("CONDA_PREFIX", ""),
-            env.get("HKOCA_ROOT", ""),
-        )
+        logger.info("Using conda env: %s", env.get("CONDA_PREFIX", ""))
         return subprocess.run([python, "-m", "hkoca.projection", *argv], env=env).returncode
 
     try:
