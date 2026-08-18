@@ -7,10 +7,18 @@ PROJECTION_ENV_HINT = (
 )
 
 
+def _import_projection_stack() -> None:
+    """Import torch/scPoli after restoring anndata APIs that scarches 0.6 needs."""
+    from hkoca.projection.scpoli import patch_anndata_for_scarches
+
+    patch_anndata_for_scarches()
+    import torch  # noqa: F401
+    from scarches.models.scpoli import scPoli  # noqa: F401
+
+
 def projection_stack_available() -> bool:
     try:
-        import torch  # noqa: F401
-        from scarches.models.scpoli import scPoli  # noqa: F401
+        _import_projection_stack()
     except Exception:
         return False
     return True
@@ -18,10 +26,9 @@ def projection_stack_available() -> bool:
 
 def require_projection_stack() -> None:
     try:
-        import torch  # noqa: F401
-        from scarches.models.scpoli import scPoli  # noqa: F401
-    except ImportError as exc:
+        _import_projection_stack()
+    except Exception as exc:
         raise ImportError(
-            "scPoli projection requires PyTorch and scArches in hkoca_projection. "
+            f"Failed to import PyTorch/scArches in hkoca_projection: {exc}. "
             + PROJECTION_ENV_HINT
         ) from exc
