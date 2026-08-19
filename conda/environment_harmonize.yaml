@@ -33,6 +33,9 @@ dependencies:
   - r-seuratobject
   - r-matrix
   - bioconductor-singlecellexperiment
+  # kBET (scIB batch metric) is not on conda-forge; r-remotes is needed to
+  # install it from GitHub after env creation (see post_install.sh).
+  - r-remotes
 
   # Python <-> R interop (pinned for anndata2ri compatibility)
   - pip
