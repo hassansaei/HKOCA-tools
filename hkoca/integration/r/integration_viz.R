@@ -481,26 +481,36 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
                 NULL
             }
         )
-        plot_args <- list(
+        base_args <- list(
             obj = obj,
             reduction = reduction,
-            group.by = col_name,
-            label = FALSE
+            group.by = col_name
         )
-        # Named vector from celltype_colors.yaml; DimPlot matches identity names.
         if (!is.null(colors) && length(colors)) {
             colors[is.na(colors) | !nzchar(colors)] <- fb
-            plot_args$cols <- colors
+            base_args$cols <- colors
         }
-        p <- do.call(.hkoca_dim_plot, plot_args) +
-            ggtitle(sprintf("%s UMAP (%s)", method_label, gsub("_", " ", col_name, fixed = TRUE)))
-        out_path <- file.path(out_dir, sprintf("umap_%s.png", col_name))
-        .save_ggplot_png(out_path, p, width = 10, height = 7)
-        .log_info(
-            "[%s] Saved annotation UMAP: %s (palette=%s, legend only)",
-            method_label, out_path, infer_palette_level(col_name)
+        title_base <- sprintf(
+            "%s UMAP (%s)", method_label, gsub("_", " ", col_name, fixed = TRUE)
         )
-        saved <- c(saved, out_path)
+        variants <- list(
+            list(suffix = "", label = TRUE, repel = TRUE, note = "labeled"),
+            list(suffix = "_legend", label = FALSE, repel = FALSE, note = "legend only")
+        )
+        for (variant in variants) {
+            plot_args <- c(base_args, list(
+                label = variant$label,
+                repel = variant$repel
+            ))
+            p <- do.call(.hkoca_dim_plot, plot_args) + ggtitle(title_base)
+            out_path <- file.path(out_dir, sprintf("umap_%s%s.png", col_name, variant$suffix))
+            .save_ggplot_png(out_path, p, width = 10, height = 7)
+            .log_info(
+                "[%s] Saved annotation UMAP: %s (palette=%s, %s)",
+                method_label, out_path, infer_palette_level(col_name), variant$note
+            )
+            saved <- c(saved, out_path)
+        }
     }
     saved
 }
