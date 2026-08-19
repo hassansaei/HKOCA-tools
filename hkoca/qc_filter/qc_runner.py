@@ -16,7 +16,7 @@ import subprocess
 from importlib import resources
 from pathlib import Path
 
-from hkoca.conda_env import ENV_QC, subprocess_env_for_prefix
+from hkoca.conda_env import ENV_QC, resolve_env_prefix, subprocess_env_for_prefix
 
 logger = logging.getLogger("hkoca.qc_filter")
 
