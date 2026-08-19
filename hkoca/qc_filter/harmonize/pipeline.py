@@ -370,7 +370,7 @@ def resolve_transgene_names(adata: sc.AnnData, transgene_names: set) -> dict:
     For each requested transgene name, find the actual gene name used in the
     dataset by normalizing hyphens, underscores and dots before comparing.
     Returns a mapping {canonical_name: actual_name_in_dataset} for transgenes
-    that were found under a variant spelling (e.g. LK03_eGFP -> LK03-eGFP).
+    that were found under a variant spelling (e.g. LK03-eGFP stored as LK03_eGFP).
     """
     import re
 
@@ -604,7 +604,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
     allowed_genes = load_allowed_genes(gtf_file)
 
     # Merge user-supplied transgene names into the reference gene set.
-    # Actual variant resolution (LK03_eGFP vs LK03-eGFP) is done per-sample
+    # Actual variant resolution (hyphen/underscore/dot) is done per-sample
     # in resolve_transgene_names() just before harmonize_matrix_sparse().
     if transgene_names:
         allowed_genes = allowed_genes | set(transgene_names)
@@ -701,7 +701,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
         try:
             logger.info(f"Harmonizing {study} to standard gene space...")
 
-            # Resolve transgene name variants (e.g. LK03-eGFP vs LK03_eGFP).
+            # Resolve transgene name variants (hyphen/underscore/dot interchangeable).
             # Rename the dataset gene to the canonical (user-supplied) name so
             # its counts are carried through harmonization instead of zero-filled.
             if transgene_names:

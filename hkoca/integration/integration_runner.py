@@ -25,7 +25,7 @@ logger = logging.getLogger("hkoca.integration")
 DEFAULT_INTEGRATION_ENV = ENV_INTEGRATION
 DEFAULT_ANNOTATION_ENV = ENV_HARMONIZE
 DEFAULT_METHODS = ("harmony", "rpca", "cca")
-DEFAULT_TRANSGENES = ("AAV", "EGFP", "mCherry", "GFP", "eGFP", "LK03_eGFP")
+DEFAULT_TRANSGENES = ("AAV", "EGFP", "mCherry", "GFP", "eGFP", "LK03-eGFP")
 
 
 def r_script_path(stage: str = "prep") -> Path:

@@ -52,7 +52,7 @@ celltype_colors_yaml: null
 markers_yaml: null
 
 # Reporter / transgene genes to FeaturePlot when present in the object
-transgenes: AAV,EGFP,mCherry,GFP,eGFP,LK03_eGFP
+transgenes: AAV,EGFP,mCherry,GFP,eGFP,LK03-eGFP
 
 # Integration methods to run (comma-separated; default: harmony,rpca,cca)
 methods: harmony,rpca,cca
