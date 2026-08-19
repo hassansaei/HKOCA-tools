@@ -53,19 +53,22 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
 
 .split_plot_layout <- function(n_panels) {
     if (n_panels <= 1L) {
-        return(list(num_columns = 1L, width = 8, height = 6))
+        return(list(num_columns = 1L, width = 7, height = 6))
     }
-    num_columns <- if (n_panels <= 2L) n_panels else min(4L, ceiling(sqrt(n_panels)))
+    num_columns <- min(3L, n_panels)
     n_rows <- ceiling(n_panels / num_columns)
-    width <- max(8, 4.5 * num_columns)
-    height <- max(6, 3.8 * n_rows)
+    width <- 4 * num_columns
+    height <- max(6, 4 * n_rows)
     list(num_columns = num_columns, width = width, height = height)
 }
 
 .feature_plot_layout <- function(n_genes) {
     ncol <- min(3L, n_genes)
     nrow <- ceiling(n_genes / ncol)
-    list(ncol = ncol, width = max(9, 3.5 * ncol), height = max(3.5, 3.5 * nrow))
+    if (n_genes == 1L) {
+        return(list(ncol = 1L, width = 7, height = 6))
+    }
+    list(ncol = ncol, width = max(9, 3.5 * ncol), height = max(6, 3.5 * nrow))
 }
 
 .save_ggplot_png <- function(path, plot, width, height, dpi = HKOCA_PLOT_DPI) {
@@ -258,19 +261,30 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
 }
 
 .hkoca_feature_plot <- function(obj, features, reduction, ncol, split.by = NULL) {
-    args <- list(
+    base_args <- list(
         object = obj,
         features = features,
         reduction = reduction,
-        ncol = ncol,
         pt.size = HKOCA_FEATURE_PT_SIZE,
         alpha = HKOCA_UMAP_ALPHA,
         order = TRUE,
         cols = HKOCA_FEATURE_COLS,
         raster = FALSE
     )
-    if (!is.null(split.by) && nzchar(split.by)) args$split.by <- split.by
-    fp <- do.call(FeaturePlot, args) & theme(plot.title = element_text(size = 9))
+    if (!is.null(split.by) && nzchar(split.by)) {
+        # Seurat may lay out all split panels in one row; combine=FALSE then
+        # wrap_plots enforces ncol (e.g. 3 columns for 6 samples).
+        split_args <- c(base_args, list(split.by = split.by, combine = FALSE))
+        fp_list <- do.call(FeaturePlot, split_args)
+        if (inherits(fp_list, "list")) {
+            fp <- patchwork::wrap_plots(fp_list, ncol = ncol)
+        } else {
+            fp <- fp_list
+        }
+    } else {
+        fp <- do.call(FeaturePlot, c(base_args, list(ncol = ncol)))
+    }
+    fp <- fp & theme(plot.title = element_text(size = 9))
     .apply_point_style(fp, size = HKOCA_FEATURE_PT_SIZE, alpha = HKOCA_UMAP_ALPHA)
 }
 
