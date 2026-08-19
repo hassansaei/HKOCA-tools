@@ -579,6 +579,29 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
         feats_upper  <- toupper(transgene_search_feats)
         matched_idx  <- match(wanted_upper, feats_upper)
         transgene_feats <- unique(transgene_search_feats[matched_idx[!is.na(matched_idx)]])
+
+        # Diagnostic: if no match found, log actual feature names that contain
+        # any substring from the transgene list to reveal renaming by R/anndata2ri.
+        if (!length(transgene_feats) && length(transgene_names)) {
+            for (tg in transgene_names) {
+                hits <- transgene_search_feats[grepl(
+                    gsub("[^A-Za-z0-9]", ".", tg), transgene_search_feats,
+                    ignore.case = TRUE, fixed = FALSE
+                )]
+                if (length(hits)) {
+                    .log_info(
+                        "[%s] Transgene '%s' not matched exactly; similar features in RNA: %s",
+                        method_label, tg, paste(head(hits, 10), collapse = ", ")
+                    )
+                } else {
+                    .log_info(
+                        "[%s] Transgene '%s': no similar feature found in RNA rownames.",
+                        method_label, tg
+                    )
+                }
+            }
+        }
+
         if (length(transgene_feats)) {
             # Transgenes must be plotted from a joined, normalized RNA assay.
             # Always join split layers and normalize regardless of the current
