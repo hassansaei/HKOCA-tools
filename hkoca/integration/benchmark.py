@@ -109,13 +109,27 @@ def benchmark_metadata_ready(
     return True, label_key
 
 def _overall_score(row: pd.Series, bio_keys: list[str], batch_keys: list[str],
-                   bio_weight: float, batch_weight: float) -> float:
-    bio = np.nanmean([row.get(k, np.nan) for k in bio_keys])
-    batch = np.nanmean([row.get(k, np.nan) for k in batch_keys])
+                   bio_weight: float, batch_weight: float,
+                   active_keys: set[str] | None = None) -> float:
+    """Compute weighted overall score, ignoring keys not in active_keys."""
+    def _mean(keys: list[str]) -> float:
+        vals = [row.get(k, np.nan) for k in keys if active_keys is None or k in active_keys]
+        finite = [v for v in vals if np.isfinite(float(v))]
+        return float(np.mean(finite)) if finite else float("nan")
+
+    bio = _mean(bio_keys)
+    batch = _mean(batch_keys)
+    if np.isnan(bio) and np.isnan(batch):
+        return float("nan")
+    if np.isnan(bio):
+        return float(batch)
+    if np.isnan(batch):
+        return float(bio)
     return float(bio_weight * bio + batch_weight * batch)
 
 
-def _load_method_adata(bench: Path, method: str, meta: pd.DataFrame, embed_key: str):
+def _load_method_adata(bench: Path, method: str, meta: pd.DataFrame, embed_key: str,
+                       batch_key: str | None = None, label_key: str | None = None):
     import anndata as ad
 
     csv_path = bench / f"{method}_embeddings.csv"
@@ -128,9 +142,53 @@ def _load_method_adata(bench: Path, method: str, meta: pd.DataFrame, embed_key: 
         return None
     emb = emb.reindex(shared)
     obs = meta.loc[shared].copy()
+    # Cast batch and label columns to categorical so scIB graph metrics work correctly.
+    for col in [batch_key, label_key]:
+        if col and col in obs.columns and not hasattr(obs[col], "cat"):
+            obs[col] = obs[col].astype("category")
     adata = ad.AnnData(obs=obs)
     adata.obsm[embed_key] = np.asarray(emb.values, dtype=np.float32)
     return adata
+
+
+def _lisi_available() -> bool:
+    """Return True if scIB's compiled knn_graph binary runs without GLIBC errors."""
+    try:
+        from scib.knn_graph import knn_graph  # noqa: F401
+        return True
+    except (ImportError, OSError):
+        return False
+
+
+def _compute_lisi_pure(adata, key: str, embed_key: str, n_neighbors: int = 90) -> float:
+    """
+    Pure-Python LISI using sklearn NearestNeighbors, following the original
+    Harmony paper definition. Returns a value in [1, n_labels], scaled to [0, 1].
+    """
+    from sklearn.neighbors import NearestNeighbors
+
+    labels = adata.obs[key].astype(str).values
+    emb = adata.obsm[embed_key]
+    k = min(n_neighbors, len(labels) - 1)
+    nn = NearestNeighbors(n_neighbors=k, algorithm="auto", n_jobs=-1)
+    nn.fit(emb)
+    _, indices = nn.kneighbors(emb)
+
+    n_cats = len(np.unique(labels))
+    if n_cats < 2:
+        return float("nan")
+
+    lisi_vals = []
+    for i, nbrs in enumerate(indices):
+        neighbor_labels = labels[nbrs]
+        counts = {c: np.sum(neighbor_labels == c) for c in np.unique(neighbor_labels)}
+        # Simpson's index denominator
+        simpson = sum((c / k) ** 2 for c in counts.values())
+        lisi_vals.append(1.0 / simpson if simpson > 0 else 1.0)
+
+    raw = float(np.mean(lisi_vals))
+    # Scale to [0, 1]: 1 (no mixing) -> 0, n_cats (perfect mixing) -> 1
+    return (raw - 1.0) / max(n_cats - 1, 1)
 
 
 def _plot_results(df: pd.DataFrame, cfg: dict[str, Any], out_dir: Path) -> None:
@@ -253,12 +311,26 @@ def run_scib_benchmark(
     batch_keys = list(metrics_cfg["batch_keys"])
     n_neighbors = int(int_cfg.get("n_neighbors") or 15)
     random_state = int(int_cfg.get("random_state") or 42)
+    lisi_k0 = int(metrics_cfg.get("lisi_k0") or 90)
+    lisi_scale = bool(metrics_cfg.get("lisi_scale", True))
+    lisi_subsample = int(metrics_cfg.get("lisi_subsample") or 100)
 
-    adata_pre = _load_method_adata(bench, "unintegrated", meta, embed_key)
+    use_native_lisi = _lisi_available()
+    if not use_native_lisi:
+        logger.warning(
+            "scIB knn_graph binary incompatible with system GLIBC; "
+            "falling back to pure-Python LISI for cLISI and iLISI."
+        )
+
+    # Load the unintegrated embedding once as the PCR baseline.
+    adata_pre = _load_method_adata(bench, "unintegrated", meta, embed_key,
+                                   batch_key=batch_key, label_key=label_key)
+
     rows: list[dict[str, Any]] = []
 
     for method in wanted:
-        adata = _load_method_adata(bench, method, meta, embed_key)
+        adata = _load_method_adata(bench, method, meta, embed_key,
+                                   batch_key=batch_key, label_key=label_key)
         if adata is None:
             logger.warning("No embeddings for method '%s'; skipping.", method)
             continue
@@ -289,17 +361,20 @@ def run_scib_benchmark(
         except Exception as exc:
             logger.warning("[%s] iso_label_ASW failed: %s", method, exc)
             row["iso_label_ASW"] = float("nan")
-        try:
-            row["cLISI"] = scib.me.clisi_graph(
-                adata, label_key=label_key, type_="embed", use_rep=embed_key,
-                k0=int(metrics_cfg.get("lisi_k0") or 90),
-                subsample=int(metrics_cfg.get("lisi_subsample") or 100),
-                scale=bool(metrics_cfg.get("lisi_scale", True)),
-                verbose=False,
-            )
-        except Exception as exc:
-            logger.warning("[%s] cLISI failed: %s", method, exc)
-            row["cLISI"] = float("nan")
+
+        # cLISI: cell-type LISI (bio conservation)
+        if use_native_lisi:
+            try:
+                row["cLISI"] = scib.me.clisi_graph(
+                    adata, label_key=label_key, type_="embed", use_rep=embed_key,
+                    k0=lisi_k0, subsample=lisi_subsample, scale=lisi_scale, verbose=False,
+                )
+            except Exception as exc:
+                logger.warning("[%s] cLISI (native) failed, retrying with pure-Python: %s", method, exc)
+                row["cLISI"] = _compute_lisi_pure(adata, label_key, embed_key, n_neighbors=lisi_k0)
+        else:
+            row["cLISI"] = _compute_lisi_pure(adata, label_key, embed_key, n_neighbors=lisi_k0)
+
         try:
             row["ASW_batch"] = scib.me.silhouette_batch(
                 adata, batch_key=batch_key, label_key=label_key, embed=embed_key, verbose=False
@@ -307,17 +382,20 @@ def run_scib_benchmark(
         except Exception as exc:
             logger.warning("[%s] ASW_batch failed: %s", method, exc)
             row["ASW_batch"] = float("nan")
-        try:
-            row["iLISI"] = scib.me.ilisi_graph(
-                adata, batch_key=batch_key, type_="embed", use_rep=embed_key,
-                k0=int(metrics_cfg.get("lisi_k0") or 90),
-                subsample=int(metrics_cfg.get("lisi_subsample") or 100),
-                scale=bool(metrics_cfg.get("lisi_scale", True)),
-                verbose=False,
-            )
-        except Exception as exc:
-            logger.warning("[%s] iLISI failed: %s", method, exc)
-            row["iLISI"] = float("nan")
+
+        # iLISI: integration LISI (batch correction)
+        if use_native_lisi:
+            try:
+                row["iLISI"] = scib.me.ilisi_graph(
+                    adata, batch_key=batch_key, type_="embed", use_rep=embed_key,
+                    k0=lisi_k0, subsample=lisi_subsample, scale=lisi_scale, verbose=False,
+                )
+            except Exception as exc:
+                logger.warning("[%s] iLISI (native) failed, retrying with pure-Python: %s", method, exc)
+                row["iLISI"] = _compute_lisi_pure(adata, batch_key, embed_key, n_neighbors=lisi_k0)
+        else:
+            row["iLISI"] = _compute_lisi_pure(adata, batch_key, embed_key, n_neighbors=lisi_k0)
+
         try:
             row["graph_connectivity"] = scib.me.graph_connectivity(adata, label_key=label_key)
         except Exception as exc:
@@ -328,10 +406,14 @@ def run_scib_benchmark(
                 adata, batch_key=batch_key, label_key=label_key, type_="embed", embed=embed_key
             )
         except Exception as exc:
-            logger.warning("[%s] kBET failed: %s", method, exc)
+            logger.warning("[%s] kBET unavailable: %s", method, exc)
             row["kBET"] = float("nan")
         try:
-            if adata_pre is not None:
+            # PCR requires the unintegrated embedding as the baseline.
+            # For the unintegrated method itself, PCR is defined as 0.
+            if method == "unintegrated":
+                row["PCR"] = 0.0
+            elif adata_pre is not None:
                 row["PCR"] = scib.me.pcr_comparison(
                     adata_pre, adata, covariate=batch_key, embed=embed_key,
                     n_comps=int(metrics_cfg.get("pcr_n_comps") or 8),
@@ -339,17 +421,12 @@ def run_scib_benchmark(
                     verbose=False,
                 )
             else:
+                logger.warning("[%s] PCR skipped: unintegrated embedding not found.", method)
                 row["PCR"] = float("nan")
         except Exception as exc:
             logger.warning("[%s] PCR failed: %s", method, exc)
             row["PCR"] = float("nan")
 
-        row["overall"] = _overall_score(
-            pd.Series(row), bio_keys, batch_keys,
-            float(metrics_cfg.get("bio_weight") or 0.6),
-            float(metrics_cfg.get("batch_weight") or 0.4),
-        )
-        logger.info("[%s] overall=%.3f", method, row["overall"])
         rows.append(row)
         del adata
 
@@ -357,6 +434,26 @@ def run_scib_benchmark(
         raise RuntimeError("scIB benchmark produced no method scores.")
 
     df = pd.DataFrame(rows).set_index("method")
+
+    # Determine which metric columns have at least one finite value; exclude
+    # completely-missing metrics (e.g. kBET not installed) from overall score.
+    all_score_cols = bio_keys + batch_keys
+    active_keys = {
+        k for k in all_score_cols
+        if k in df.columns and df[k].apply(lambda v: np.isfinite(float(v))).any()
+    }
+    skipped = set(all_score_cols) - active_keys
+    if skipped:
+        logger.warning("Metrics excluded from overall score (all NaN): %s", sorted(skipped))
+
+    bio_weight = float(metrics_cfg.get("bio_weight") or 0.6)
+    batch_weight = float(metrics_cfg.get("batch_weight") or 0.4)
+    for method in df.index:
+        df.loc[method, "overall"] = _overall_score(
+            df.loc[method], bio_keys, batch_keys, bio_weight, batch_weight,
+            active_keys=active_keys,
+        )
+        logger.info("[%s] overall=%.3f", method, df.loc[method, "overall"])
     out_csv = metrics_csv_path(output_dir, cfg)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv)
