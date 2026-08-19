@@ -210,14 +210,31 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
 .ensure_joined_normalized_rna <- function(obj) {
     if (!"RNA" %in% Assays(obj)) return(obj)
     assay_obj <- obj[["RNA"]]
+
+    # Seurat v5 Assay5: join split per-sample layers into single counts/data.
     if (inherits(assay_obj, "Assay5") && exists("JoinLayers", mode = "function")) {
-        obj[["RNA"]] <- JoinLayers(assay_obj)
+        obj[["RNA"]] <- JoinLayers(obj[["RNA"]])
     }
-    has_data <- TRUE
-    if (exists("Layers", mode = "function")) {
+
+    # Determine which named layers exist after the join.
+    ly <- if (exists("Layers", mode = "function")) {
+        tryCatch(Layers(obj[["RNA"]]), error = function(e) character(0))
+    } else {
+        character(0)
+    }
+
+    has_counts <- length(ly) == 0L ||   # v4 Assay: Layers() unavailable, assume present
+                  any(ly == "counts" | startsWith(ly, "counts."))
+    has_data   <- any(ly == "data"   | startsWith(ly, "data."))
+
+    # If counts are still split (join did not collapse them), force a join attempt.
+    if (!has_counts && inherits(obj[["RNA"]], "Assay5") && exists("JoinLayers", mode = "function")) {
+        obj[["RNA"]] <- JoinLayers(obj[["RNA"]])
         ly <- tryCatch(Layers(obj[["RNA"]]), error = function(e) character(0))
         has_data <- any(ly == "data" | startsWith(ly, "data."))
     }
+
+    # Generate the normalized data layer if it is absent.
     if (!has_data) {
         obj <- NormalizeData(obj, assay = "RNA", verbose = FALSE)
     }
@@ -571,9 +588,11 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
         matched_idx  <- match(wanted_upper, feats_upper)
         transgene_feats <- unique(transgene_search_feats[matched_idx[!is.na(matched_idx)]])
         if (length(transgene_feats)) {
-            # Transgenes are plotted from the RNA assay; switch DefaultAssay
-            # in case the current feature_assay is SCT (which omits non-HVGs).
-            if ("RNA" %in% Assays(obj) && !identical(DefaultAssay(obj), "RNA")) {
+            # Transgenes must be plotted from a joined, normalized RNA assay.
+            # Always join split layers and normalize regardless of the current
+            # DefaultAssay — split layers produced by split_sct_merge have no
+            # joined counts/data layer, causing FeaturePlot to return empty plots.
+            if ("RNA" %in% Assays(obj)) {
                 obj <- .ensure_joined_normalized_rna(obj)
                 DefaultAssay(obj) <- "RNA"
             }
