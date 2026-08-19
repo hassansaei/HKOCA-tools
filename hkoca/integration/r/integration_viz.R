@@ -316,19 +316,11 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
 
 .prepare_rna_for_split_feature_plot <- function(obj, split_col) {
     if (!"RNA" %in% Assays(obj)) return(obj)
+    # Join layers and normalize so FeaturePlot has a single data layer to read.
+    # Do NOT re-split the assay: FeaturePlot handles split.by visually from the
+    # joined assay. Re-splitting would destroy the data layer just created.
     obj <- .ensure_joined_normalized_rna(obj)
-    if (!split_col %in% colnames(obj@meta.data)) return(obj)
-    if (length(.categorical_levels(obj@meta.data[[split_col]])) < 2L) return(obj)
     DefaultAssay(obj) <- "RNA"
-    if (exists("split", mode = "function")) {
-        obj[["RNA"]] <- tryCatch(
-            split(obj[["RNA"]], f = obj@meta.data[[split_col]]),
-            error = function(e) {
-                .log_warn("Could not split RNA by '%s': %s", split_col, conditionMessage(e))
-                obj[["RNA"]]
-            }
-        )
-    }
     obj
 }
 
