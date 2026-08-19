@@ -575,9 +575,12 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
             method_label, length(transgene_search_feats), DefaultAssay(obj),
             paste(transgene_names, collapse = ", ")
         )
-        wanted_upper <- toupper(transgene_names)
-        feats_upper  <- toupper(transgene_search_feats)
-        matched_idx  <- match(wanted_upper, feats_upper)
+        # Normalize hyphens, underscores and dots before matching so that
+        # LK03_eGFP (user-supplied) finds LK03-eGFP (stored by CellRanger).
+        .norm_name <- function(x) toupper(gsub("[-_.]", "X", x))
+        wanted_norm <- .norm_name(transgene_names)
+        feats_norm  <- .norm_name(transgene_search_feats)
+        matched_idx  <- match(wanted_norm, feats_norm)
         transgene_feats <- unique(transgene_search_feats[matched_idx[!is.na(matched_idx)]])
 
         # Diagnostic: if no match found, log actual feature names that contain

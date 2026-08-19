@@ -365,6 +365,39 @@ def load_sample(row: pd.Series, working_dir: str | None = None,
 # HARMONIZATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+def resolve_transgene_names(adata: sc.AnnData, transgene_names: set) -> dict:
+    """
+    For each requested transgene name, find the actual gene name used in the
+    dataset by normalizing hyphens, underscores and dots before comparing.
+    Returns a mapping {canonical_name: actual_name_in_dataset} for transgenes
+    that were found under a variant spelling (e.g. LK03_eGFP -> LK03-eGFP).
+    """
+    import re
+
+    def _norm(s):
+        return re.sub(r"[-_.]", "", s).upper()
+
+    var_names = adata.var_names.tolist()
+    norm_to_actual = {_norm(v): v for v in var_names}
+
+    resolved = {}
+    for tg in transgene_names:
+        if tg in var_names:
+            continue  # exact match already in dataset
+        actual = norm_to_actual.get(_norm(tg))
+        if actual and actual != tg:
+            resolved[tg] = actual
+            logger.info(
+                "Transgene '%s' not found exactly; matched as '%s' in dataset.",
+                tg, actual,
+            )
+        elif actual is None:
+            logger.info(
+                "Transgene '%s' not found in dataset (will be zero-filled).", tg,
+            )
+    return resolved
+
+
 def harmonize_matrix_sparse(adata: sc.AnnData, allowed_genes: set) -> sc.AnnData:
     """
     Harmonize an AnnData to the allowed_genes reference set using native sparse ops.
@@ -570,7 +603,9 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
                  skip_existing: bool = True) -> list:
     allowed_genes = load_allowed_genes(gtf_file)
 
-    # Merge user-supplied transgene names into the reference gene set
+    # Merge user-supplied transgene names into the reference gene set.
+    # Actual variant resolution (LK03_eGFP vs LK03-eGFP) is done per-sample
+    # in resolve_transgene_names() just before harmonize_matrix_sparse().
     if transgene_names:
         allowed_genes = allowed_genes | set(transgene_names)
         logger.info(
@@ -665,6 +700,16 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
         # ── Harmonize (passed directly from memory)
         try:
             logger.info(f"Harmonizing {study} to standard gene space...")
+
+            # Resolve transgene name variants (e.g. LK03-eGFP vs LK03_eGFP).
+            # Rename the dataset gene to the canonical (user-supplied) name so
+            # its counts are carried through harmonization instead of zero-filled.
+            if transgene_names:
+                variant_map = resolve_transgene_names(adata, transgene_names)
+                if variant_map:
+                    rename = {actual: canonical for canonical, actual in variant_map.items()}
+                    adata.var_names = pd.Index([rename.get(g, g) for g in adata.var_names])
+                    adata.var_names_make_unique()
 
             adata_new = harmonize_matrix_sparse(adata, allowed_genes)
             logger.info(f"Harmonized shape: {adata_new.shape}")
