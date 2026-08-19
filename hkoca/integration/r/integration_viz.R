@@ -485,8 +485,7 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
             obj = obj,
             reduction = reduction,
             group.by = col_name,
-            label = TRUE,
-            repel = TRUE
+            label = FALSE
         )
         # Named vector from celltype_colors.yaml; DimPlot matches identity names.
         if (!is.null(colors) && length(colors)) {
@@ -498,8 +497,8 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
         out_path <- file.path(out_dir, sprintf("umap_%s.png", col_name))
         .save_ggplot_png(out_path, p, width = 10, height = 7)
         .log_info(
-            "[%s] Saved annotation UMAP: %s (palette=%s, labels=%d)",
-            method_label, out_path, infer_palette_level(col_name), length(colors)
+            "[%s] Saved annotation UMAP: %s (palette=%s, legend only)",
+            method_label, out_path, infer_palette_level(col_name)
         )
         saved <- c(saved, out_path)
     }
