@@ -559,9 +559,24 @@ HKOCA_FEATURE_COLS <- c("grey80", "black")
             )
             if (!is.null(saved)) feature_outputs[[grp$label]] <- saved
         }
-        transgene_feats <- .match_features_in_object(obj, transgene_names)
-        transgene_feats <- transgene_feats[transgene_feats %in% rownames(obj)]
+        # Transgenes may not be in the SCT HVG set; always search the RNA assay.
+        transgene_search_feats <- if ("RNA" %in% Assays(obj)) rownames(obj[["RNA"]]) else rownames(obj)
+        .log_info(
+            "[%s] Searching %d features (assay=%s) for transgenes: %s",
+            method_label, length(transgene_search_feats), DefaultAssay(obj),
+            paste(transgene_names, collapse = ", ")
+        )
+        wanted_upper <- toupper(transgene_names)
+        feats_upper  <- toupper(transgene_search_feats)
+        matched_idx  <- match(wanted_upper, feats_upper)
+        transgene_feats <- unique(transgene_search_feats[matched_idx[!is.na(matched_idx)]])
         if (length(transgene_feats)) {
+            # Transgenes are plotted from the RNA assay; switch DefaultAssay
+            # in case the current feature_assay is SCT (which omits non-HVGs).
+            if ("RNA" %in% Assays(obj) && !identical(DefaultAssay(obj), "RNA")) {
+                obj <- .ensure_joined_normalized_rna(obj)
+                DefaultAssay(obj) <- "RNA"
+            }
             saved <- .save_one_feature_plot(
                 obj, transgene_feats, reduction, out_dir, "transgenes", method_label
             )
