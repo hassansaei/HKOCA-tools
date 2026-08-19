@@ -252,6 +252,43 @@ def run_annotation_stage(
     return 0
 
 
+def _ensure_benchmark(cfg: PipelineConfig, df, *, force: bool = False, dry_run: bool = False) -> int:
+    """Run scIB benchmark for any study whose benchmark outputs are missing or incomplete."""
+    from hkoca.integration.benchmark import benchmark_complete
+    from hkoca.integration.integration_runner import run_scib_stage
+    from hkoca.pipeline.paths import integration_output_dir
+
+    studies = sorted({str(row["study"]).strip() for _, row in df.iterrows() if str(row.get("study", "")).strip()})
+    n_studies = len(studies)
+
+    for study in studies:
+        int_dir = integration_output_dir(cfg, study, n_studies=n_studies)
+        prepared_rds = integration_prepared_rds(int_dir)
+
+        if not force and benchmark_complete(int_dir):
+            logger.info("Benchmark already complete for %s; skipping.", study)
+            continue
+
+        if dry_run:
+            logger.info("[dry-run] would run scIB benchmark for study %s", study)
+            continue
+
+        logger.info("Benchmark incomplete for %s; running now.", study)
+        from hkoca.integration.integration_runner import parse_methods
+        methods_list = parse_methods(cfg.integration_methods)
+        rc = run_scib_stage(
+            prepared_rds=str(prepared_rds),
+            output_dir=str(int_dir),
+            methods=methods_list,
+            force_overwrite=force,
+        )
+        if rc != 0:
+            logger.error("Benchmark failed for study '%s'.", study)
+            return rc
+
+    return 0
+
+
 def run_integration_stage(
     cfg: PipelineConfig,
     df,
@@ -266,7 +303,7 @@ def run_integration_stage(
         ok, reason = integration_stage_complete(cfg, df, methods=cfg.integration_methods)
         if ok:
             logger.info("Integration stage already complete (%s); skipping.", reason)
-            return 0
+            return _ensure_benchmark(cfg, df, force=force, dry_run=dry_run)
         logger.info("Integration resume: %s", reason)
 
     try:
@@ -353,7 +390,7 @@ def run_integration_stage(
         logger.error("Integration stage finished but outputs are incomplete: %s", reason)
         return 1
     logger.info("Integration stage completed successfully.")
-    return 0
+    return _ensure_benchmark(cfg, df, force=force, dry_run=dry_run)
 
 
 def run_projection_stage(
