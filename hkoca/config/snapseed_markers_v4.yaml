@@ -30,7 +30,7 @@ Nephron:
     Proliferative_tubule:
           marker_genes: [UBE2C, MKI67, TOP2A, BIRC5, PCNA, CUBN]
 Ureteric_Epithelium:
-  marker_genes: [GATA3, SLC26A7, AQP2, RET, WFDC2]
+  marker_genes: [SLC26A7, AQP2, RET, WFDC2]
   subtypes:
     Ureteric_Bud:
       marker_genes: [RET]
