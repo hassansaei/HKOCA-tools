@@ -322,10 +322,6 @@ def run_scib_benchmark(
             "falling back to pure-Python LISI for cLISI and iLISI."
         )
 
-    # Load the unintegrated embedding once as the PCR baseline.
-    adata_pre = _load_method_adata(bench, "unintegrated", meta, embed_key,
-                                   batch_key=batch_key, label_key=label_key)
-
     rows: list[dict[str, Any]] = []
 
     for method in wanted:
@@ -401,31 +397,6 @@ def run_scib_benchmark(
         except Exception as exc:
             logger.warning("[%s] graph_connectivity failed: %s", method, exc)
             row["graph_connectivity"] = float("nan")
-        try:
-            row["kBET"] = scib.me.kBET(
-                adata, batch_key=batch_key, label_key=label_key, type_="embed", embed=embed_key
-            )
-        except Exception as exc:
-            logger.warning("[%s] kBET unavailable: %s", method, exc)
-            row["kBET"] = float("nan")
-        try:
-            # PCR requires the unintegrated embedding as the baseline.
-            # For the unintegrated method itself, PCR is defined as 0.
-            if method == "unintegrated":
-                row["PCR"] = 0.0
-            elif adata_pre is not None:
-                row["PCR"] = scib.me.pcr_comparison(
-                    adata_pre, adata, covariate=batch_key, embed=embed_key,
-                    n_comps=int(metrics_cfg.get("pcr_n_comps") or 8),
-                    scale=bool(metrics_cfg.get("pcr_scale", True)),
-                    verbose=False,
-                )
-            else:
-                logger.warning("[%s] PCR skipped: unintegrated embedding not found.", method)
-                row["PCR"] = float("nan")
-        except Exception as exc:
-            logger.warning("[%s] PCR failed: %s", method, exc)
-            row["PCR"] = float("nan")
 
         rows.append(row)
         del adata
@@ -436,7 +407,7 @@ def run_scib_benchmark(
     df = pd.DataFrame(rows).set_index("method")
 
     # Determine which metric columns have at least one finite value; exclude
-    # completely-missing metrics (e.g. kBET not installed) from overall score.
+    # completely-missing metrics from overall score.
     all_score_cols = bio_keys + batch_keys
     active_keys = {
         k for k in all_score_cols

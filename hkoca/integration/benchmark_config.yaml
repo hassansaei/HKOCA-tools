@@ -28,8 +28,6 @@ metrics:
     - ASW_batch
     - graph_connectivity
     - iLISI
-    - kBET
-    - PCR
   methods:
     - unintegrated
     - harmony
@@ -37,8 +35,6 @@ metrics:
     - cca
   embed_key: X_emb
   cluster_key: leiden_scib
-  pcr_n_comps: 8
-  pcr_scale: true
   lisi_k0: 90
   lisi_subsample: 100
   lisi_scale: true
