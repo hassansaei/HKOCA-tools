@@ -783,13 +783,15 @@ DBL_10X_TABLE_DBR       <- DBL_10X_V3_TABLE_DBR
     }
 
     tryCatch({
-        sce_out <- if (!is.null(samples)) {
-            if (is.null(dbr)) scDblFinder(sce, samples = samples)
-            else              scDblFinder(sce, samples = samples, dbr = dbr)
-        } else {
-            if (is.null(dbr)) scDblFinder(sce)
-            else              scDblFinder(sce, dbr = dbr)
-        }
+        sce_out <- suppressWarnings({
+            if (!is.null(samples)) {
+                if (is.null(dbr)) scDblFinder(sce, samples = samples)
+                else              scDblFinder(sce, samples = samples, dbr = dbr)
+            } else {
+                if (is.null(dbr)) scDblFinder(sce)
+                else              scDblFinder(sce, dbr = dbr)
+            }
+        })
         list(sce = sce_out, fallback = FALSE, reason = NULL)
     }, error = function(e) {
         log_warn(sprintf("  %s: scDblFinder failed (%s) - marking all %d cells as singlets.",
@@ -1717,8 +1719,8 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             ))
 
             inflation      <- round(s_median(fobj$nCount_RNA) / s_median(obj$nCount_RNA), 2)
-            inflation_flag <- if (inflation > 1.5)   " \u26a0 OVER-FILTERING"
-                              else if (inflation < 1.05) " \u26a0 CHECK: very light filtering"
+            inflation_flag <- if (inflation > 1.5)   " WARNING: OVER-FILTERING"
+                              else if (inflation < 1.05) " WARNING: very light filtering"
                               else ""
             log_info(sprintf("  Saved  : %s", filtered_path))
             log_info(sprintf("  Cells  : %d -> %d  (%.1f%% removed)", cells_raw, cells_filtered, pct_removed))
@@ -1848,9 +1850,9 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             geom_hline(yintercept = 1.4, linetype = "dashed", color = "orange", linewidth = 0.5) +
             geom_hline(yintercept = 1.5, linetype = "dashed", color = "red",    linewidth = 0.6) +
             scale_fill_manual(values = c("FALSE" = "#41b6c4", "TRUE" = "#e31a1c"),
-                              labels = c("OK (\u22641.5x)", "Over-filtered (>1.5x)")) +
+                              labels = c("OK (<=1.5x)", "Over-filtered (>1.5x)")) +
             labs(title = "Median nCount Inflation Ratio (post/pre)",
-                 subtitle = "Target: 1.1\u20131.4\u00d7  |  Orange: 1.4\u00d7  |  Red: 1.5\u00d7 (over-filtering threshold)",
+                 subtitle = "Target: 1.1-1.4x  |  Orange: 1.4x  |  Red: 1.5x (over-filtering threshold)",
                  y = "Inflation Ratio", x = "", fill = "") +
             theme_minimal() +
             theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "top")
@@ -1992,7 +1994,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                             p_counts_indiv / p_genes_indiv / p_counts_ridge / p_genes_ridge +
                 plot_layout(heights = c(1, 1, 1.5, 2.5, 2.5, 2, 2)) +
                 plot_annotation(
-                    title    = "QC \u2014 Comprehensive Single-Cell QC Board",
+                    title    = "QC - Comprehensive Single-Cell QC Board",
                     subtitle = "CSV-driven thresholds | Violin + scatter PNGs per dataset | Inflation ratio diagnostic",
                     theme    = theme(
                         plot.title    = element_text(size = 16, face = "bold", hjust = 0.5),
@@ -2003,7 +2005,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             # Fallback: 3-panel if ridge data unavailable
             final_layout <- (p1 | p2) / (p3_inf | p4) / (p5 | p6) +
                 plot_layout(heights = c(1, 1, 1.5)) +
-                plot_annotation(title = "QC \u2014 Comprehensive Single-Cell QC Board")
+                plot_annotation(title = "QC - Comprehensive Single-Cell QC Board")
         }
 
         options(repr.plot.width = 18, repr.plot.height = 42)
@@ -2565,7 +2567,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
             p_umap <- ggplot(plot_df, aes(UMAP_1, UMAP_2, color = doublet_status)) +
                 geom_point(size = 0.5, alpha = 0.8) +
                 scale_color_manual(values = dbl_colors) +
-                labs(title    = paste("Doublet Classification \u2014", sample_nm),
+                labs(title    = paste("Doublet Classification -", sample_nm),
                      subtitle = sprintf(
                          "Confident doublets: %d (%.2f%%)  |  Ambiguous: %d (%.2f%%)",
                          n_doublets, pct_doublet, n_ambiguous, pct_ambiguous),
@@ -2577,7 +2579,7 @@ s_max    <- function(x) round(max(as.numeric(x),    na.rm = TRUE), 2)
                 annotate("text", x = 0.5, y = 0.5,
                          label = "UMAP unavailable for this sample",
                          size = 5, color = "grey50") +
-                labs(title = paste("Doublet Classification \u2014", sample_nm),
+                labs(title = paste("Doublet Classification -", sample_nm),
                      subtitle = sprintf(
                          "Confident doublets: %d (%.2f%%)  |  Ambiguous: %d (%.2f%%)",
                          n_doublets, pct_doublet, n_ambiguous, pct_ambiguous)) +

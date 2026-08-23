@@ -20,13 +20,23 @@ _UNASSIGNED_TOKENS = {"", "unassigned", "nan", "none", "na", "null"}
 
 def _suppress_annotation_warnings() -> None:
     """Quiet noisy third-party warnings during clustering / Snapseed / plotting."""
+    import os
     import warnings
 
+    os.environ.setdefault("JAX_PLATFORMS", "cpu")
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     warnings.filterwarnings("ignore", message=".*h5py is running against HDF5.*")
     warnings.filterwarnings("ignore", message=".*zero-centering a sparse.*")
+    warnings.filterwarnings("ignore", message=".*CUDA-enabled jaxlib.*")
+    try:
+        import logging
+
+        logging.getLogger("jax").setLevel(logging.ERROR)
+        logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
+    except Exception:
+        pass
     try:
         from anndata import ImplicitModificationWarning
 
