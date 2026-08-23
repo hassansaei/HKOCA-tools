@@ -235,6 +235,26 @@ def load_sample_info(csv_path: str) -> Any:
     return load_metadata_csv(csv_path)
 
 
+def cellbender_output_path(sample_dir: str, sample_id: str, output_suffix: str) -> str:
+    return os.path.join(sample_dir, f"{sample_id}{output_suffix}")
+
+
+def cellbender_filtered_output_path(sample_dir: str, sample_id: str, output_suffix: str) -> str:
+    """CellBender cell-called matrix path (appends _filtered before the extension)."""
+    base = cellbender_output_path(sample_dir, sample_id, output_suffix)
+    stem, ext = os.path.splitext(base)
+    return f"{stem}_filtered{ext}"
+
+
+def _resolve_existing_csv_data_path(row: Any, working_dir: str) -> str | None:
+    path = str(row.get("data_path", "") or "").strip()
+    if not path:
+        return None
+    if working_dir and not os.path.isabs(path):
+        path = os.path.normpath(os.path.join(working_dir, path))
+    return path if os.path.isfile(path) else None
+
+
 def resolve_sample_dir(row: Any, working_dir: str) -> str:
     explicit = str(row.get("sample_dir", "") or "").strip()
     if explicit:
@@ -263,10 +283,13 @@ def harmonize_data_path(
     output_suffix: str,
     used_cellbender: bool,
 ) -> str:
+    existing = _resolve_existing_csv_data_path(row, working_dir)
+    if existing:
+        return existing
     if used_cellbender:
         sample_dir = resolve_sample_dir(row, working_dir)
         sample_id = str(row["sample_id"]).strip()
-        return os.path.join(sample_dir, f"{sample_id}{output_suffix}")
+        return cellbender_filtered_output_path(sample_dir, sample_id, output_suffix)
     path = str(row["data_path"]).strip()
     if working_dir and not os.path.isabs(path):
         path = os.path.normpath(os.path.join(working_dir, path))

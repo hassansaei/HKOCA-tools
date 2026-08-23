@@ -5,7 +5,13 @@ from __future__ import annotations
 import glob
 import os
 
-from hkoca.pipeline.config import PipelineConfig, qc_output_dir, resolve_sample_dir, sample_runs_cellbender
+from hkoca.pipeline.config import (
+    PipelineConfig,
+    cellbender_filtered_output_path,
+    qc_output_dir,
+    resolve_sample_dir,
+    sample_runs_cellbender,
+)
 from hkoca.pipeline.paths import (
     annotation_output_dir,
     discover_study_qc_filtered_h5ad,
@@ -50,10 +56,6 @@ def harmonize_complete(output_root: str, df, *, require_rds: bool = True) -> tup
     return (len(missing) == 0, missing)
 
 
-def cellbender_output_path(sample_dir: str, sample_id: str, output_suffix: str) -> str:
-    return os.path.join(sample_dir, f"{sample_id}{output_suffix}")
-
-
 def cellbender_complete(
     cfg: PipelineConfig,
     df,
@@ -68,7 +70,7 @@ def cellbender_complete(
             continue
         sample_id = str(row["sample_id"]).strip()
         sample_dir = resolve_sample_dir(row, cfg.working_dir)
-        path = cellbender_output_path(sample_dir, sample_id, output_suffix)
+        path = cellbender_filtered_output_path(sample_dir, sample_id, output_suffix)
         if _nonempty_file(path):
             done_ids.add(sample_id)
         else:
