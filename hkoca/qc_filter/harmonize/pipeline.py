@@ -444,7 +444,7 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
         header = fh.readline()
     sep = ";" if header.count(";") > header.count(",") else ","
     if sep == ";":
-        logger.warning("CSV uses semicolons — reading with sep=';'. Re-save as comma-separated to avoid issues.")
+        logger.warning("CSV uses semicolons; reading with sep=';'. Re-save as comma-separated to avoid issues.")
 
     df = pd.read_csv(csv_path, sep=sep, keep_default_na=False, encoding="utf-8")
     df.columns = df.columns.str.strip()
@@ -458,10 +458,10 @@ def load_metadata_csv(csv_path: str) -> pd.DataFrame:
     # Warn (not error) when optional pipeline-control columns are absent so the
     # user knows which defaults will be applied.
     if "file_prefix" not in df.columns:
-        logger.info("Column 'file_prefix' not found — defaulting to no prefix for all samples.")
+        logger.info("Column 'file_prefix' not found; defaulting to no prefix for all samples.")
     if "output_dir" not in df.columns:
         logger.info(
-            "Column 'output_dir' not found — per-study output paths will be derived from "
+            "Column 'output_dir' not found; per-study output paths will be derived from "
             "--output / output_root config. Pass --output or add the column if needed."
         )
 
@@ -535,7 +535,7 @@ def convert_h5ad_to_rds(h5ad_path: str, rds_path: str) -> None:
             X_clean = sp.csr_matrix(adata.X).astype('float64')
 
         if np.isnan(X_clean.data).any():
-            logger.warning("NAs found in count matrix — replacing with 0")
+            logger.warning("NAs found in count matrix; replacing with 0")
             X_clean.data = np.nan_to_num(X_clean.data, nan=0.0)
 
         obs_clean = pd.DataFrame(index=adata.obs.index)
@@ -654,7 +654,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
             target = rds_file if to_rds else harmonized_h5ad
             if target and os.path.isfile(target) and os.path.getsize(target) > 0:
                 logger.info(
-                    "Skipping study %s — output already exists: %s",
+                    "Skipping study %s - output already exists: %s",
                     study,
                     target,
                 )
@@ -667,7 +667,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
             try:
                 adata = load_sample(row, working_dir=working_dir, obs_cols=obs_cols)
                 adatas.append(adata)
-                logger.info(f"Loaded sample {sample_id} → {adata.shape}")
+                logger.info(f"Loaded sample {sample_id} -> {adata.shape}")
             except Exception as e:
                 logger.error(f"FAILED to load {sample_id}: {e}")
                 logger.debug("Exception traceback:", exc_info=True)
@@ -683,7 +683,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
         else:
             adata = sc.concat(adatas, join="outer")
             adata.obs_names_make_unique()
-            logger.info(f"Concatenated {len(adatas)} samples → {adata.shape}")
+            logger.info(f"Concatenated {len(adatas)} samples -> {adata.shape}")
         del adatas  # free per-sample objects; adata now holds the study-level data
 
         for col in adata.obs.select_dtypes(include=["string", "object"]).columns:
@@ -731,7 +731,7 @@ def run_pipeline(metadata_csv: str, gtf_file: str, output_root: str,
         for f in failed:
             logger.warning(f"  [{f['study']} / {f['sample_id']}] {f['error']}")
     else:
-        logger.info("PIPELINE FULLY COMPLETE — No failures.")
+        logger.info("PIPELINE FULLY COMPLETE - No failures.")
 
     return failed
 
@@ -755,7 +755,7 @@ def _get_obs_meta(obs: pd.DataFrame, col: str,
     if col not in obs.columns:
         if warned_missing is not None and col not in warned_missing:
             logger.warning(
-                f"Summary: expected obs column '{col}' not found in this dataset — "
+                f"Summary: expected obs column '{col}' not found in this dataset - "
                 "it will appear as 'Unknown' in the report. "
                 "Add it to your metadata CSV as an optional column if needed."
             )
@@ -824,7 +824,7 @@ def run_summary(scan_path: str, cfg: configparser.ConfigParser | None = None) ->
             else:
                 if "sample_id" not in warned_missing:
                     logger.warning(
-                        "Summary: 'sample_id' not found — per-sample plot will "
+                        "Summary: 'sample_id' not found - per-sample plot will "
                         "treat each dataset as a single sample."
                     )
                     warned_missing.add("sample_id")
