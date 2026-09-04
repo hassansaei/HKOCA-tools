@@ -324,6 +324,11 @@ def unpack_tarball(tarball_name: str, directory: str) -> bool:
 
     try:
         with tarfile.open(tarball_name, 'r:gz') as tar:
+            base_dir = os.path.realpath(directory)
+            for member in tar.getmembers():
+                member_path = os.path.realpath(os.path.join(directory, member.name))
+                if not (member_path == base_dir or member_path.startswith(base_dir + os.sep)):
+                    raise tarfile.TarError(f"Unsafe path in tar member: {member.name}")
             tar.extractall(path=directory)
         return True
 
