@@ -1,55 +1,43 @@
 Bootstrap: docker
-From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+From: nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
 %labels
     Author          Haythem Mami
-    Version         0.3.2
-    Description     CellBender v0.3.2 for scRNA-seq ambient RNA removal
-    CUDA_Version    11.8
+    Version         0.3.2-cu121
+    Description     CellBender 0.3.2 + PyTorch 2.1.2 cu121 (A100 + H100)
+    CUDA_Version    12.1
     Python_Version  3.10
+    Torch_Version   2.1.2+cu121
 
 %help
-    CellBender v0.3.2 container with CUDA 11.8 support.
+    CellBender 0.3.2 with PyTorch 2.1.2+cu121 (A100 and H100).
 
-    Build:
-        export APPTAINER_TMPDIR=/your/scratch/apptainer_tmp
-        export APPTAINER_CACHEDIR=/your/scratch/apptainer_cache
-        mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR
-        apptainer build cellbender_v0.3.2.sif cellbender_v0.3.2.def
+    Build from conda/ (compute node):
+        cd conda
+        apptainer build cellbender_v0.3.2_cu121.sif cellbender_v0.3.2_updated.def
 
-    Run on CPU:
-        apptainer run cellbender_v0.3.2.sif \
-            remove-background --input raw.h5 --output out.h5
-
-    Run on GPU:
-        apptainer run --nv cellbender_v0.3.2.sif \
-            remove-background --cuda --input raw.h5 --output out.h5
-
-    Check GPU:
-        apptainer exec --nv cellbender_v0.3.2.sif \
-            python -c "import torch; print(torch.cuda.is_available())"
-
-    SLURM example:
-        #SBATCH --gres=gpu:1
-        module load apptainer
-        apptainer run --nv cellbender_v0.3.2.sif \
-            remove-background --cuda --input raw.h5 --output out.h5
+    GPU check:
+        apptainer exec --nv cellbender_v0.3.2_cu121.sif \
+            python -c "import torch; print(torch.__version__, torch.cuda.get_device_name(0))"
 
 %environment
     export PATH=/opt/miniforge/envs/cellbender/bin:/opt/miniforge/bin:$PATH
     export CONDA_DEFAULT_ENV=cellbender
     export CONDA_PREFIX=/opt/miniforge/envs/cellbender
+    export LD_LIBRARY_PATH=/opt/miniforge/envs/cellbender/lib:/opt/miniforge/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
     export TORCH_HOME=/tmp/torch_cache
     export XDG_CACHE_HOME=/tmp/xdg_cache
     export MPLCONFIGDIR=/tmp/matplotlib
     export NUMBA_CACHE_DIR=/tmp/numba_cache
     export PYTHONDONTWRITEBYTECODE=1
-    export LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+%files
+    patches/checkpoint.py /tmp/checkpoint_patched.py
+    patches/report.py /tmp/report_patched.py
 
 %post
     set -eu
 
-    # Redirect build-time caches to inside the sandbox
     mkdir -p /opt/tmp /opt/pip_tmp /opt/conda_pkgs
     export TMPDIR=/opt/tmp
     export TEMP=/opt/tmp
@@ -61,7 +49,6 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
     export MPLCONFIGDIR=/opt/tmp/matplotlib
     mkdir -p /opt/tmp/xdg /opt/tmp/matplotlib /opt/tmp/pycache
 
-    # System packages
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
     apt-get install -y --no-install-recommends \
@@ -75,7 +62,6 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
     apt-get clean
     rm -rf /var/lib/apt/lists/*
 
-    # Install Miniforge
     wget -q \
         https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
         -O /opt/tmp/miniforge.sh
@@ -85,23 +71,25 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
     export PATH=/opt/miniforge/bin:$PATH
     conda config --system --set auto_activate_base false
 
-    # Create cellbender environment with Python 3.10
     conda create -y -n cellbender python=3.10
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate cellbender
 
-    # Install PyTorch and CellBender in a single step to force the version pin
-    pip install \
-        --no-cache-dir \
-        torch==1.13.1+cu117 \
+    conda install -y -n cellbender -c conda-forge libstdcxx-ng
+
+    pip install --no-cache-dir \
+        torch==2.1.2 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+    pip install --no-cache-dir \
         "numpy<2" \
-        cellbender==0.3.2 \
-        --extra-index-url https://download.pytorch.org/whl/cu117
+        dill \
+        cellbender==0.3.2
 
-    # Install cellbender
-    pip install --no-cache-dir "numpy<2" cellbender==0.3.2
+    CB=/opt/miniforge/envs/cellbender/lib/python3.10/site-packages/cellbender/remove_background
+    cp /tmp/checkpoint_patched.py "${CB}/checkpoint.py"
+    cp /tmp/report_patched.py "${CB}/report.py"
 
-    # Cleanup
     conda clean --all --force-pkgs-dirs -y
     pip cache purge || true
     find /opt/miniforge -name "*.pyc" -delete 2>/dev/null || true
@@ -115,10 +103,11 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate cellbender
     /opt/miniforge/envs/cellbender/bin/python -c "
-import cellbender, torch
+import cellbender, torch, numpy
 print('CellBender:', cellbender.__version__)
 print('PyTorch:   ', torch.__version__)
+print('NumPy:     ', numpy.__version__)
 print('CUDA built:', torch.version.cuda)
 print('CUDA avail (needs GPU node):', torch.cuda.is_available())
-print('==> All OK')
+print('==> build test OK')
 "
