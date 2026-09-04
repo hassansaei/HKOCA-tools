@@ -17,6 +17,7 @@ import subprocess
 import datetime
 import os
 import shutil
+import tempfile
 import logging
 from typing import Dict, Optional
 
@@ -29,42 +30,17 @@ TIMEOUT = 1200  # twenty minutes should always be way more than enough
 # https://stackoverflow.com/questions/53014306/error-15-initializing-libiomp5-dylib-but-found-libiomp5-dylib-already-initial
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
-run_notebook_str = lambda file: \
-    f'jupyter nbconvert ' \
-    f'--ExecutePreprocessor.timeout={TIMEOUT} ' \
-    f'--to notebook ' \
-    f'--allow-errors ' \
-    f'--execute {file}'
-to_html_str = lambda file, output: \
-    f'jupyter nbconvert ' \
-    f'--to html ' \
-    f'--TemplateExporter.exclude_input=True ' \
-    f'{file}'
-
-
-def _run_notebook(file):
-    shutil.copy(file, 'tmp.report.ipynb')
-    subprocess.run(run_notebook_str(file='tmp.report.ipynb'), shell=True)
-    os.remove('tmp.report.ipynb')
-    return 'tmp.report.nbconvert.ipynb'
-
-
-def _to_html(file, output) -> str:
-    subprocess.run(to_html_str(file=file, output=output), shell=True)
-    os.replace(file.replace(".ipynb", ".html"), output)
-    os.remove(file)
-    return output
-
 
 def _postprocess_html(file: str, title: str):
     try:
         with open(file, mode='r', encoding="utf8", errors="surrogateescape") as f:
             html = f.read()
-        html = html.replace('<title>tmp.report.nbconvert</title>',
-                            f'<title>{title}</title>')
+        # Match whatever nbconvert used as the default <title>.
+        html = html.replace('<title>tmp.report.nbconvert</title>', f'<title>{title}</title>')
+        html = html.replace('<title>report.nbconvert</title>', f'<title>{title}</title>')
         with open(file, mode='w', encoding="utf8", errors="surrogateescape") as f:
             f.write(html)
-    except:
+    except Exception:
         logger.warning('Failed to overwrite default HTML report title. '
                        'This is purely aesthetic and does not affect output.')
 
@@ -81,12 +57,59 @@ def run_notebook_make_html(file, output) -> str:
 
     """
     assert output.endswith('.html'), 'Output HTML filename should end with .html'
-    html_file = _to_html(file=_run_notebook(file), output=output)
-    _postprocess_html(
-        file=html_file,
-        title=('CellBender: ' + os.path.basename(output).replace('_report.html', '')),
-    )
-    return html_file
+
+    work_dir = tempfile.mkdtemp(prefix='cellbender_report_')
+    try:
+        tmp_nb = os.path.join(work_dir, 'report.ipynb')
+        shutil.copy(file, tmp_nb)
+
+        subprocess.run(
+            [
+                'jupyter', 'nbconvert',
+                f'--ExecutePreprocessor.timeout={TIMEOUT}',
+                '--to', 'notebook',
+                '--allow-errors',
+                '--execute', tmp_nb,
+                '--output', 'report.nbconvert',
+                '--output-dir', work_dir,
+            ],
+            shell=False,
+            check=True,
+        )
+
+        executed_nb = os.path.join(work_dir, 'report.nbconvert.ipynb')
+        if not os.path.isfile(executed_nb):
+            raise RuntimeError(
+                f'Notebook execution did not produce expected output: {executed_nb}'
+            )
+
+        subprocess.run(
+            [
+                'jupyter', 'nbconvert',
+                '--to', 'html',
+                '--TemplateExporter.exclude_input=True',
+                executed_nb,
+                '--output', 'report.nbconvert',
+                '--output-dir', work_dir,
+            ],
+            shell=False,
+            check=True,
+        )
+
+        html_src = os.path.join(work_dir, 'report.nbconvert.html')
+        if not os.path.isfile(html_src):
+            raise RuntimeError(
+                f'HTML conversion did not produce expected output: {html_src}'
+            )
+
+        os.replace(html_src, output)
+        _postprocess_html(
+            file=output,
+            title=('CellBender: ' + os.path.basename(output).replace('_report.html', '')),
+        )
+        return output
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def generate_summary_plots(input_file: str,
