@@ -61,6 +61,8 @@ RUN mamba env create -f /tmp/conda/environment_harmonize.yaml && \
     conda clean -afy && \
     find /opt/conda/envs -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true && \
     find /opt/conda/envs -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.a' \) -delete 2>/dev/null || true && \
+    cp /tmp/conda/patches/checkpoint.py /opt/conda/envs/hkoca_cellbender/lib/python3.10/site-packages/cellbender/remove_background/checkpoint.py && \
+    cp /tmp/conda/patches/report.py /opt/conda/envs/hkoca_cellbender/lib/python3.10/site-packages/cellbender/remove_background/report.py && \
     rm -rf /tmp/conda
 
 # =============================================================================
