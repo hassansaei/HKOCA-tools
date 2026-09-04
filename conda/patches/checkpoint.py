@@ -208,8 +208,12 @@ def load_from_checkpoint(filebase: Optional[str],
         # This smoothly allows re-runs (including for problematic v0.3.1)
         logger.debug(f'force_use_checkpoint: {force_use_checkpoint}')
         if force_use_checkpoint or (filebase is None):
-            filebase = (glob.glob(os.path.join(tmp_dir, '*_model.torch'))[0]
-                        .replace('_model.torch', ''))
+            model_files = glob.glob(os.path.join(tmp_dir, '*_model.torch'))
+            if not model_files:
+                raise ValueError(
+                    f'Checkpoint tarball "{tarball_name}" has no *_model.torch member'
+                )
+            filebase = model_files[0].replace('_model.torch', '')
             logger.debug(f'Accepting any file hash, so loading {filebase}*')
         
         else:
@@ -297,8 +301,8 @@ def attempt_load_checkpoint(filebase: Optional[str],
         logger.debug('No tarball found')
         return {'loaded': False}
 
-    except ValueError:
-        logger.debug('Unpacked tarball files have a different workflow hash: will not load')
+    except ValueError as exc:
+        logger.warning('Checkpoint not loaded: %s', exc)
         return {'loaded': False}
 
 
@@ -316,25 +320,47 @@ def make_tarball(files: List[str], tarball_name: str) -> bool:
     return True
 
 
+def _safe_tar_members(tar: tarfile.TarFile, destination: str):
+    """Yield members whose paths stay inside destination (no abs / .. / links)."""
+    dest_real = os.path.realpath(destination)
+    for member in tar.getmembers():
+        member_path = os.path.realpath(os.path.join(dest_real, member.name))
+        if os.path.commonpath([dest_real, member_path]) != dest_real:
+            raise ValueError(
+                f'Archive member path is outside the destination directory: {member.name!r}'
+            )
+        if member.issym() or member.islnk():
+            raise ValueError(
+                f'Archive contains a symbolic or hard link: {member.name!r}'
+            )
+        yield member
+
+
 def unpack_tarball(tarball_name: str, directory: str) -> bool:
-    """Untar a checkpoint tarball and put the files in directory."""
+    """Untar a checkpoint tarball and put the files in directory.
+
+    Returns False only when the tarball path does not exist (soft miss).
+    Raises ValueError when the file exists but is invalid or unsafe to extract
+    (corrupt archive, path traversal, links). Callers that soft-resume should
+    catch ValueError.
+    """
     if not os.path.exists(tarball_name):
         logger.info("No saved checkpoint.")
         return False
 
     try:
         with tarfile.open(tarball_name, 'r:gz') as tar:
-            base_dir = os.path.realpath(directory)
-            for member in tar.getmembers():
-                member_path = os.path.realpath(os.path.join(directory, member.name))
-                if not (member_path == base_dir or member_path.startswith(base_dir + os.sep)):
-                    raise tarfile.TarError(f"Unsafe path in tar member: {member.name}")
-            tar.extractall(path=directory)
+            members = list(_safe_tar_members(tar, directory))
+            tar.extractall(path=directory, members=members)
         return True
 
-    except Exception:
-        logger.warning("Failed to unpack existing tarball.")
-        return False
+    except ValueError:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to unpack existing tarball %s: %s", tarball_name, exc)
+        raise ValueError(
+            f'Checkpoint tarball exists but could not be unpacked: {tarball_name}'
+        ) from exc
 
 
 def create_workflow_hashcode(module_path: str,
