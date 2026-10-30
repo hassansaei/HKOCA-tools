@@ -1,0 +1,2 @@
+data_path,sample_id,study,source,diff_protocol,sc_protocol,sequencing,genome_build,Age,type,genotype,cell_type,cell_line,geo_gsm,geo_gse,platform_id,library_kit,contact,condition
+path/to/GSM9712682_WT.h5ad,GSM9712682,GSE329881,hiPSC,vanichapol,Parse_Evercode_WT_Mini_v3,DNBSEQ-G400,GRCh38,d12,scRNAseq,wildtype,UB_organoids,hiPSC_derived,GSM9712682,GSE329881,GPL28038,Evercode_WT_Mini_v3,Veronika_Sander_University_of_Auckland,WT

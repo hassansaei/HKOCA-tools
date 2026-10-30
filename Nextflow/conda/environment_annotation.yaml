@@ -1,0 +1,25 @@
+# Optional dedicated annotation env.
+# Prefer installing Snapseed into hkoca_harmonize instead (see environment_harmonize.yaml).
+# Keep this file only if you want an annotation-only environment without the R bridge.
+name: hkoca_annotation
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - h5py
+  - anndata
+  - scanpy
+  - matplotlib
+  - pyyaml
+  - numba
+  - scikit-learn
+  - python-igraph
+  - leidenalg
+  - pip:
+      - git+https://github.com/hassansaei/snapseed.git
