@@ -1,0 +1,2 @@
+"Sample","Total_Cells","Doublets_Found","Ambiguous_Found","Singlets_Retained","Cells_in_Singlets_RDS","Percent_Doublet","Percent_Ambiguous","Ambiguous_Score_Lo","Ambiguous_Score_Hi","DBR_Used","Cells_Loaded_Used","Cells_Recovered_Used","DBR_Source"
+"GSE329881_harmonized",4906,338,92,4476,4568,6.89,1.88,0.528375733855186,0.571428571428571,0.038248,NA,4906,"AUTO_10X_FALLBACK"

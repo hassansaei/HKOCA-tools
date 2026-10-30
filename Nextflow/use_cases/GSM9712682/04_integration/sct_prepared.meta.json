@@ -1,0 +1,85 @@
+{
+  "timestamp": "2026-10-29 16:52:07",
+  "param_hash": "133cae03f48ddcb824b72ae1c8bd369a",
+  "params": {
+    "input_rds": "path/to/GSE329881_harmonized_singlets_filtered.rds",
+    "annotated_h5ad": "path/to/GSE329881_harmonized_singlets_filtered_annotated.h5ad",
+    "n_features": 2500,
+    "npcs": 50,
+    "neighbor_dims": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30
+    ],
+    "mito_regress": "percent.mito",
+    "integration_batch_key": "sample_id",
+    "resolutions": [
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.8,
+      1,
+      1.2
+    ],
+    "cluster_prefix": "SCT_snn_res.",
+    "silhouette_subsample": 5000,
+    "silhouette_min_resolution": 0.4,
+    "silhouette_min_clusters": 5,
+    "prep_workflow": "split_sct_merge"
+  },
+  "annotation_columns": [
+    "Level_1",
+    "Level_2",
+    "Level_3"
+  ],
+  "celltype_colors_yaml": "path/to/celltype_colors.yaml",
+  "outputs": {
+    "prepared_rds": "path/to/sct_prepared.rds",
+    "elbow_plot": "path/to/elbow_plot.png",
+    "clustree_plot": "path/to/clustree_sct.png",
+    "silhouette_plot": "path/to/silhouette_sct.png",
+    "nonintegrated_dir": "path/to/nonintegrated",
+    "nonintegrated_umap": "path/to/umap_res0.4.png",
+    "nonintegrated_split_columns": [
+      "orig.ident",
+      "doublet_status"
+    ],
+    "nonintegrated_feature_plots": 27,
+    "nonintegrated_proportion_plots": [
+      "path/to/celltype_proportion_Level_1.png",
+      "path/to/celltype_proportion_Level_2.png",
+      "path/to/celltype_proportion_Level_3.png"
+    ],
+    "silhouette_csv": "path/to/silhouette_scores.csv",
+    "resolution_summary": "path/to/resolution_summary.csv"
+  },
+  "best_resolution": 0.4
+}

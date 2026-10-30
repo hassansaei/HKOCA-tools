@@ -1,0 +1,4 @@
+"sample","cells_raw","cells_after_ghost","dbr_used","doublets_found","ambiguous_found","pct_doublets","pct_ambiguous","cells_after_doublet_removal","cells_after_qc","pct_qc_removal","total_cells_removal","pct_total_cells_removal"
+"gse329881",4906,4906,0.038248,338,92,6.89,1.88,4568,NA,NA,NA,NA
+"gse329881_harmonized",NA,NA,NA,NA,NA,NA,NA,NA,4246,NA,NA,NA
+"TOTAL",4906,4906,NA,338,92,6.89,NA,4568,4246,7.05,0,0

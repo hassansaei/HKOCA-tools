@@ -1,0 +1,28 @@
+{
+  "atlas_h5ad": "path/to/Master_Atlas_scPoli_Integrated_Reannotated_fullgenes.h5ad",
+  "query": "path/to/sct_prepared.rds",
+  "model_dir": "path/to/scPoli_Reference_Model",
+  "projected_h5ad": "path/to/sct_prepared_projected.h5ad",
+  "n_query_cells": 4246,
+  "n_query_genes": 24100,
+  "n_sample_id": 1,
+  "celltype_key": "Level_3_Integrated",
+  "label_transfer": "scpoli_prototype_classify",
+  "cuda": true,
+  "mean_Level_3_uncert": 0.335599809885025,
+  "similarity": {
+    "n_query_cells": 4246,
+    "n_atlas_anchor_cells": 80000,
+    "k_neighbors": 30,
+    "atlas_latent_key": "surgery_X_scpoli",
+    "atlas_umap_key": "X_umap_scpoli",
+    "atlas_latent_calib_dist_p95": 0.22234418243169787,
+    "mean_similarity": 0.021757211536169052,
+    "median_similarity": 0.0,
+    "pct_ge_50": 0.0,
+    "pct_ge_70": 0.0,
+    "pct_ge_85": 0.0,
+    "note": "Query and an atlas subsample are encoded with the query surgery model. Query cells are placed on the fixed atlas UMAP (X_umap_scpoli) by kNN in that shared latent. Atlas UMAP is never recomputed. Level_3_uncert is scaled per query batch."
+  },
+  "atlas_umap_frozen": true
+}

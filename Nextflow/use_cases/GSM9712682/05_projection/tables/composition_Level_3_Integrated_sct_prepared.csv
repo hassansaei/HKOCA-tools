@@ -1,0 +1,37 @@
+dataset,label,n_cells,fraction
+atlas,Interstitial_Fibroblasts,192900,0.2256
+atlas,Neural_progenitor_cells,100349,0.1174
+atlas,Nephron_progenitor_cells,94134,0.1101
+atlas,Proliferative_stroma,72712,0.085
+atlas,Endodermal_cells,57508,0.0673
+atlas,Stromal_progenitors,53527,0.0626
+atlas,Mature_podocytes,50756,0.0594
+atlas,Proliferative_tubule,48499,0.0567
+atlas,Muscle_progenitor_cells,43533,0.0509
+atlas,undifferentiated_pluripotent_cells,35910,0.042
+atlas,Mesangial_cells,31474,0.0368
+atlas,Dev_PT,14638,0.0171
+atlas,Pericytes,9827,0.0115
+atlas,Activated Fibroblasts,9630,0.0113
+atlas,Precursor_podocytes,9287,0.0109
+atlas,PT,8850,0.0104
+atlas,DT,4519,0.0053
+atlas,Collecting_duct,3573,0.0042
+atlas,Dev_DT,3570,0.0042
+atlas,LOH,3529,0.0041
+atlas,Early_endothelium,3245,0.0038
+atlas,PT (PEC-like),2032,0.0024
+atlas,Glial_cells,995,0.0012
+projected_query,Endodermal_cells,901,0.2122
+projected_query,Interstitial_Fibroblasts,865,0.2037
+projected_query,Muscle_progenitor_cells,776,0.1828
+projected_query,Neural_progenitor_cells,554,0.1305
+projected_query,Stromal_progenitors,550,0.1295
+projected_query,Proliferative_stroma,363,0.0855
+projected_query,DT,81,0.0191
+projected_query,Proliferative_tubule,50,0.0118
+projected_query,Nephron_progenitor_cells,35,0.0082
+projected_query,Pericytes,30,0.0071
+projected_query,Mesangial_cells,20,0.0047
+projected_query,Dev_PT,17,0.004
+projected_query,Early_endothelium,4,0.0009
