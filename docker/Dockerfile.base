@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.7
+# HKOCA base image: hkoca.base
+#
+# Holds the stage conda environments. These layers are large and stay valid
+# until conda/*.yaml or this file changes. The tool image (docker/Dockerfile)
+# installs the hkoca package on top and is rebuilt when the package version
+# changes.
+#
+# Build (from the repository root). Pin linux/amd64 for conda/bioconda and
+# CellBender CUDA wheels. Apple Silicon hosts must pass the same platform.
+#   docker build --platform linux/amd64 -f docker/Dockerfile.base -t hkoca.base:latest .
+#
+# Cache mounts are unused on purpose. BuildKit does not export
+# RUN --mount=type=cache into remote cache backends, and a cache mounted at
+# /opt/conda/pkgs breaks conda hardlinking across filesystems.
+
+ARG TARGETPLATFORM=linux/amd64
+ARG MINIFORGE=condaforge/miniforge3:24.11.3-0@sha256:bcfc04b3562faa8dfd48f3767e2bd7b73a8529f9611b508d42e5bd227db1342d
+
+FROM --platform=$TARGETPLATFORM ${MINIFORGE} AS envs
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# miniforge 24.11.3-0 already ships mamba with libmamba. Do not reinstall mamba
+# from conda-forge here; that floats the toolchain and breaks the digest pin.
+
+COPY conda/ /tmp/conda/
+RUN mamba env create -f /tmp/conda/environment_harmonize.yaml && \
+    mamba env create -f /tmp/conda/environment_cellbender.yaml && \
+    mamba env create -f /tmp/conda/environment_qc.yaml && \
+    mamba env create -f /tmp/conda/environment_integration.yaml && \
+    mamba env create -f /tmp/conda/environment_projection.yaml && \
+    conda run -n hkoca_integration Rscript -e "if (!requireNamespace('SeuratDisk', quietly=TRUE)) remotes::install_github('mojaveazure/seurat-disk', upgrade='never')" && \
+    conda run -n hkoca_integration Rscript -e "if (!requireNamespace('scCustomize', quietly=TRUE)) remotes::install_github('samuel-marsh/scCustomize', upgrade='never')" && \
+    conda clean -afy && \
+    find /opt/conda/envs -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true && \
+    find /opt/conda/envs -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.a' \) -delete 2>/dev/null || true && \
+    cp /tmp/conda/patches/checkpoint.py /opt/conda/envs/hkoca_cellbender/lib/python3.10/site-packages/cellbender/remove_background/checkpoint.py && \
+    cp /tmp/conda/patches/report.py /opt/conda/envs/hkoca_cellbender/lib/python3.10/site-packages/cellbender/remove_background/report.py && \
+    rm -rf /tmp/conda
+
+FROM --platform=$TARGETPLATFORM ${MINIFORGE}
+
+LABEL org.opencontainers.image.title="HKOCA base" \
+      org.opencontainers.image.description="HKOCA conda environments. Rebuild when conda environment files change." \
+      org.opencontainers.image.vendor="HKOCA / NephAtlas" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/hassansaei/HKOCA-tools"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CONDA_AUTO_UPDATE_CONDA=FALSE \
+    HKOCA_ENV=hkoca_harmonize \
+    HKOCA_ROOT=/opt/hkoca \
+    PATH=/opt/conda/envs/hkoca_harmonize/bin:$PATH \
+    DEFAULT_INPUT_DIR=/opt/hkoca/input \
+    DEFAULT_OUTPUT_DIR=/opt/hkoca/output
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG USERNAME=appuser
+ARG USER_UID=1001
+ARG USER_GID=1001
+
+RUN groupadd --gid $USER_GID $USERNAME && \
+    useradd --uid $USER_UID --gid $USER_GID --shell /bin/bash --create-home $USERNAME && \
+    install -d -o $USERNAME -g $USERNAME \
+        $DEFAULT_INPUT_DIR $DEFAULT_OUTPUT_DIR /data /out
+
+COPY --from=envs /opt/conda/envs /opt/conda/envs
+
+USER appuser
+WORKDIR /data

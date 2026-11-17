@@ -6,4 +6,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
+
+# Local Cursor / agent guidance (not part of the toolkit release)
 .cursor/
+.agent-style/
+AGENTS.md
+.cursorrules

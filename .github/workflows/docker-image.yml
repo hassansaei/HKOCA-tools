@@ -1,0 +1,205 @@
+name: Docker images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - hkoca/_version.py
+      - conda/**
+      - docker/Dockerfile.base
+      - docker/Dockerfile
+      - docker/entrypoint.sh
+      - .github/workflows/docker-image.yml
+  workflow_dispatch:
+    inputs:
+      rebuild_base:
+        description: Rebuild hkoca.base even when conda files are unchanged
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      build_base: ${{ steps.plan.outputs.build_base }}
+      build_app: ${{ steps.plan.outputs.build_app }}
+      base_image: ${{ steps.plan.outputs.base_image }}
+      app_image: ${{ steps.plan.outputs.app_image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide which images to build
+        id: plan
+        run: |
+          set -euo pipefail
+
+          VERSION="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("hkoca/_version.py").read_text()
+          match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+          if not match:
+              raise SystemExit("Could not read __version__ from hkoca/_version.py")
+          print(match.group(1))
+          PY
+          )"
+          # Docker tags accept letters, digits, dots, underscores, and dashes.
+          TAG="$(printf '%s' "$VERSION" | tr '+' '_')"
+
+          OWNER="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          BASE_IMAGE="ghcr.io/${OWNER}/hkoca.base"
+          APP_IMAGE="ghcr.io/${OWNER}/hkoca"
+
+          build_base=false
+          build_app=false
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            build_app=true
+            if [ "${{ inputs.rebuild_base }}" = "true" ]; then
+              build_base=true
+            fi
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              build_base=true
+              build_app=true
+            elif ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              echo "Previous commit ${BEFORE} is unavailable; building base and tool image."
+              build_base=true
+              build_app=true
+            else
+              CHANGED="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+              printf 'Changed files:\n%s\n' "$CHANGED"
+              if printf '%s\n' "$CHANGED" | grep -Eq '^(conda/|docker/Dockerfile\.base$)'; then
+                build_base=true
+              fi
+              if printf '%s\n' "$CHANGED" | grep -Eq '^hkoca/_version\.py$'; then
+                build_app=true
+              fi
+            fi
+          fi
+
+          # A versioned tool image needs a base. Build it when the registry
+          # does not already have hkoca.base:latest.
+          if [ "$build_base" = "false" ] && [ "$build_app" = "true" ]; then
+            if ! docker buildx imagetools inspect "${BASE_IMAGE}:latest" >/dev/null 2>&1; then
+              echo "Base image ${BASE_IMAGE}:latest is not in GHCR; it will be built."
+              build_base=true
+            fi
+          fi
+
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "build_base=${build_base}" >> "$GITHUB_OUTPUT"
+          echo "build_app=${build_app}" >> "$GITHUB_OUTPUT"
+          echo "base_image=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "app_image=${APP_IMAGE}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Docker build plan"
+            echo ""
+            echo "- Package version: \`${TAG}\`"
+            echo "- Build \`${BASE_IMAGE}:latest\`: \`${build_base}\`"
+            echo "- Build \`${APP_IMAGE}:${TAG}\` and \`${APP_IMAGE}:latest\`: \`${build_app}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-base:
+    name: Build hkoca.base
+    needs: plan
+    if: needs.plan.outputs.build_base == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.base
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ needs.plan.outputs.base_image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  build-app:
+    name: Build hkoca image
+    needs: [plan, build-base]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.build_app == 'true' &&
+      (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push tool image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            BASE_IMAGE=${{ needs.plan.outputs.base_image }}:latest
+            HKOCA_VERSION=${{ needs.plan.outputs.version }}
+          tags: |
+            ${{ needs.plan.outputs.app_image }}:${{ needs.plan.outputs.version }}
+            ${{ needs.plan.outputs.app_image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}

@@ -53,6 +53,18 @@ pip install -e .
 invokes the QC R script with `sc_qc_pipeline` (no mid-run `conda activate`).
 Override with `HKOCA_QC_ENV` or `HKOCA_RSCRIPT` if needed.
 
+## Docker
+
+`hkoca.base` contains the conda environments (`hkoca_harmonize`, `hkoca_cellbender`, `sc_qc_pipeline`, `hkoca_integration`, `hkoca_projection`). Rebuild that image when files under `conda/` or `docker/Dockerfile.base` change. The tool image installs the current hkoca package onto that base.
+
+```bash
+docker build --platform linux/amd64 -f docker/Dockerfile.base -t hkoca.base:latest .
+docker build --platform linux/amd64 -f docker/Dockerfile -t hkoca:local .
+docker run --rm --platform linux/amd64 hkoca:local --version
+```
+
+A push to `main` that changes `hkoca/_version.py` publishes `ghcr.io/hassansaei/hkoca:<version>` and `ghcr.io/hassansaei/hkoca:latest`. The workflow builds `ghcr.io/hassansaei/hkoca.base:latest` first when the conda environments changed in that push, or when that base tag is missing from GHCR. A push that changes only the environment files updates the base and leaves the published tool tags in place until the next version change. Run the workflow manually from the Actions tab to publish the current version; set **Rebuild hkoca.base** to force a base rebuild.
+
 ## CLI
 
 ```bash
