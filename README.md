@@ -299,16 +299,20 @@ hkoca cellbender mtx \
 
 ## License
 
-This project is released under the [MIT License](LICENSE).
+This project is released under the [BSD 3-Clause License](LICENSE).
 
 When you use, copy, modify, or redistribute this toolkit (or parts of it), you must:
 
-- Keep the copyright notice and MIT license text with the source or in documentation
+- Keep the copyright notice, license conditions, and disclaimer with the source
+- For binary / packaged redistributions, include the same notices in the
+  documentation or other materials shipped with the distribution
 - Credit the HKOCA / NephAtlas project and point to the source repository:
   https://github.com/hassansaei/HKOCA-tools
-- If you distribute a modified version, clearly state that changes were made and retain the original copyright and license notice
+- Do not use the names of the copyright holders or contributors to endorse or
+  promote derived products without prior written permission
 
 Example attribution in a paper, report, or derivative tool:
 
 > Analysis performed with HKOCA-tools (Human Kidney Organoid Cell Atlas / NephAtlas).
 > Source: https://github.com/hassansaei/HKOCA-tools
+

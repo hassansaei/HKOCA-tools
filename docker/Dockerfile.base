@@ -49,7 +49,7 @@ FROM --platform=$TARGETPLATFORM ${MINIFORGE}
 LABEL org.opencontainers.image.title="HKOCA base" \
       org.opencontainers.image.description="HKOCA conda environments. Rebuild when conda environment files change." \
       org.opencontainers.image.vendor="HKOCA / NephAtlas" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="BSD-3-Clause" \
       org.opencontainers.image.source="https://github.com/hassansaei/HKOCA-tools"
 
 ENV DEBIAN_FRONTEND=noninteractive \

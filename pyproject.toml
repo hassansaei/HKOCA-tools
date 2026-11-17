@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "NephAtlas / HKOCA modular single-cell kidney organoid analysis toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "BSD-3-Clause" }
 authors = [{ name = "HKOCA / NephAtlas developers" }]
 keywords = ["single-cell", "organoid", "kidney", "scanpy", "cellbender"]
 classifiers = [

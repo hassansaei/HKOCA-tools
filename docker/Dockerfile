@@ -36,7 +36,7 @@ FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 LABEL org.opencontainers.image.title="HKOCA" \
       org.opencontainers.image.description="NephAtlas / HKOCA modular single-cell kidney organoid analysis toolkit" \
       org.opencontainers.image.vendor="HKOCA / NephAtlas" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="BSD-3-Clause" \
       org.opencontainers.image.source="https://github.com/hassansaei/HKOCA-tools"
 
 ARG HKOCA_VERSION=dev
