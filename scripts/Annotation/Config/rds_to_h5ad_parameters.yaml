@@ -1,14 +1,15 @@
-# Parameters for RDS → h5ad conversion feeding this atlas restart
-# Script: scripts/rds_to_h5ad.r (+ scripts/rds_conversion_job.sh)
+# Optional RDS → h5ad conversion (scheduler skips if h5ad already exist)
+# Script: scripts/rds_to_h5ad.r (invoked by scripts/run_annotation.sh when needed)
 
 method: SeuratDisk SaveH5Seurat → Convert(h5ad)
 seurat_v5_handling: cast Assay5 RNA assay to Assay (v3) before SaveH5Seurat
 
-# Paths actually used for the final QC-filtered objects (not the /test/ paths in the script defaults)
+# Used only when no filtered singlet .h5ad are found yet
 input_rds_dir: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results_after_harmonization_final/qc_filtered_rds
 output_h5ad_dir: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results_after_harmonization_final/qc_filtered_h5ad_converted
 
-# Copied into atlas_shortcut for concatenation
+# Preferred when QC already wrote h5ad — also the concatenation input_dir
+# Pattern expected: *_harmonized_singlets_filtered.h5ad
 atlas_shortcut_input_copy: /data-master/pure-workspace/labss/hmami/atlas_shortcut/filtered_singlets_harmonized
 
 sbatch:
