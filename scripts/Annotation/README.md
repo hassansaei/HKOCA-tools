@@ -34,7 +34,7 @@ Clustering (normalize → HVG → PCA → neighbors → Leiden → UMAP) is incl
 ## Directory layout
 
 ```
-annotation_pipeline/
+Annotation/
 ├── README.md
 ├── scripts/          # pipeline code + scheduler
 ├── config/           # paths and parameters (YAML)
@@ -58,25 +58,25 @@ Afterwards, we discovered a low quality cluster, which was removed
 
 ## Scheduler
 
-`scripts/run_annotation_pipeline.sh` runs the four steps in order, reading paths from `config/*.yaml`. Logs go under `logs/`.
+`scripts/run_Annotation.sh` runs the four steps in order, reading paths from `config/*.yaml`. Logs go under `logs/`.
 
 ```bash
-cd annotation_pipeline   # or Organization/annotation_pipeline in this repo
+cd Annotation   # or Organization/Annotation in this repo
 
 # Full chain
-bash scripts/run_annotation_pipeline.sh
+bash scripts/run_Annotation.sh
 
 # Preview commands without running
-bash scripts/run_annotation_pipeline.sh --dry-run
+bash scripts/run_Annotation.sh --dry-run
 
 # Resume from a step (skips earlier ones)
-bash scripts/run_annotation_pipeline.sh --from concat
-bash scripts/run_annotation_pipeline.sh --from cluster
-bash scripts/run_annotation_pipeline.sh --from annotate
+bash scripts/run_Annotation.sh --from concat
+bash scripts/run_Annotation.sh --from cluster
+bash scripts/run_Annotation.sh --from annotate
 
 # Run a single step
-bash scripts/run_annotation_pipeline.sh --only concat
-bash scripts/run_annotation_pipeline.sh --only annotate
+bash scripts/run_Annotation.sh --only concat
+bash scripts/run_Annotation.sh --only annotate
 ```
 
 Environment overrides (optional):
