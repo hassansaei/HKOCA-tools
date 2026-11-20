@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# RDS -> h5ad -> concat -> Leiden cluster -> Snapseed v5
+# Optional RDS→h5ad → concat → Leiden cluster → Snapseed v5
 #
-#   bash scripts/run_annotation_pipeline.sh
-#   bash scripts/run_annotation_pipeline.sh --from concat
-#   bash scripts/run_annotation_pipeline.sh --only annotate
-#   bash scripts/run_annotation_pipeline.sh --dry-run
+#   bash scripts/run_annotation.sh
+#   bash scripts/run_annotation.sh --from concat
+#   bash scripts/run_annotation.sh --only annotate
+#   bash scripts/run_annotation.sh --dry-run
+#
+# RDS→h5ad is optional: if filtered singlet .h5ad files already exist
+# (e.g. written by QC), conversion is skipped. If only .rds are present,
+# they are converted.
 
 set -euo pipefail
 
@@ -19,6 +23,8 @@ PY="${PY:-/data-master/pure-workspace/hmami/conda_envs/atlas/bin/python}"
 RSCRIPT="${RSCRIPT:-$(command -v Rscript || true)}"
 [[ -n "${RSCRIPT}" ]] || RSCRIPT="/data-master/pure-workspace/hmami/conda_envs/atlas/bin/Rscript"
 
+H5AD_GLOB="*_harmonized_singlets_filtered.h5ad"
+
 FROM="rds"
 ONLY=""
 DRY_RUN=0
@@ -28,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --from) FROM="${2:-}"; shift 2 ;;
     --only) ONLY="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -90,6 +96,29 @@ should_run() {
   esac
 }
 
+count_files() {
+  local dir="$1" pattern="$2"
+  if [[ ! -d "${dir}" ]]; then
+    echo 0
+    return
+  fi
+  find "${dir}" -maxdepth 1 -type f -name "${pattern}" 2>/dev/null | wc -l | tr -d ' '
+}
+
+sync_h5ad_to_concat() {
+  local src="$1" dst="$2"
+  [[ "${src}" == "${dst}" ]] && return 0
+  [[ ! -d "${src}" ]] && return 0
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    log "dry-run would sync ${H5AD_GLOB} from ${src} → ${dst}"
+    return 0
+  fi
+  mkdir -p "${dst}"
+  local n
+  n="$(find "${src}" -maxdepth 1 -type f -name "${H5AD_GLOB}" -exec cp -n {} "${dst}/" \; -print | wc -l | tr -d ' ')"
+  log "synced ${n} h5ad file(s) → ${dst}"
+}
+
 RDS_CFG="${CONFIG}/rds_to_h5ad_parameters.yaml"
 CONCAT_CFG="${CONFIG}/concatenation_parameters.yaml"
 ANN_CFG="${CONFIG}/snapseed_annotation_parameters.yaml"
@@ -110,11 +139,28 @@ export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-8}"
 export PYTHONUNBUFFERED=1
 export LD_LIBRARY_PATH="/data-master/pure-workspace/hmami/conda_envs/atlas/lib:${LD_LIBRARY_PATH:-}"
 
-log "pipeline root=${PIPE_ROOT} from=${FROM} only=${ONLY:-all} dry_run=${DRY_RUN}"
+log "annotation root=${PIPE_ROOT} from=${FROM} only=${ONLY:-all} dry_run=${DRY_RUN}"
 
 if should_run rds; then
-  TMP_R="${LOGDIR}/rds_to_h5ad_configured_$$.R"
-  cat > "${TMP_R}" <<REOF
+  N_H5_CONCAT="$(count_files "${CONCAT_INPUT_DIR}" "${H5AD_GLOB}")"
+  N_H5_OUT="$(count_files "${OUTPUT_H5AD_DIR}" "${H5AD_GLOB}")"
+  N_RDS="$(count_files "${INPUT_RDS_DIR}" "*.rds")"
+
+  log "detect inputs: h5ad(concat_dir)=${N_H5_CONCAT} h5ad(convert_out)=${N_H5_OUT} rds=${N_RDS}"
+
+  if [[ "${N_H5_CONCAT}" -gt 0 || "${N_H5_OUT}" -gt 0 ]]; then
+    log "h5ad already present (e.g. from QC) — skip RDS→h5ad conversion"
+    if [[ "${N_H5_CONCAT}" -eq 0 && "${N_H5_OUT}" -gt 0 ]]; then
+      sync_h5ad_to_concat "${OUTPUT_H5AD_DIR}" "${CONCAT_INPUT_DIR}"
+    fi
+  elif [[ "${N_RDS}" -gt 0 ]]; then
+    log "RDS detected, no filtered h5ad yet — running conversion"
+    if [[ ! -x "${RSCRIPT}" && ! -f "${RSCRIPT}" ]]; then
+      log "ERROR: Rscript not found (${RSCRIPT})"
+      exit 1
+    fi
+    TMP_R="${LOGDIR}/rds_to_h5ad_configured_$$.R"
+    cat > "${TMP_R}" <<REOF
 suppressPackageStartupMessages({ library(Seurat); library(SeuratDisk) })
 INPUT_DIR  <- "${INPUT_RDS_DIR}"
 OUTPUT_DIR <- "${OUTPUT_H5AD_DIR}"
@@ -137,12 +183,12 @@ for (rds_path in rds_files) {
     file.rename(produced, h5ad_path)
 }
 REOF
-  run_cmd "1_rds_to_h5ad" "${RSCRIPT}" "${TMP_R}"
-  rm -f "${TMP_R}"
-  if [[ "${OUTPUT_H5AD_DIR}" != "${CONCAT_INPUT_DIR}" && "${DRY_RUN}" -eq 0 ]]; then
-    mkdir -p "${CONCAT_INPUT_DIR}"
-    find "${OUTPUT_H5AD_DIR}" -maxdepth 1 -name '*_harmonized_singlets_filtered.h5ad' \
-      -exec cp -n {} "${CONCAT_INPUT_DIR}/" \;
+    run_cmd "1_rds_to_h5ad" "${RSCRIPT}" "${TMP_R}"
+    rm -f "${TMP_R}"
+    sync_h5ad_to_concat "${OUTPUT_H5AD_DIR}" "${CONCAT_INPUT_DIR}"
+  else
+    log "ERROR: no ${H5AD_GLOB} in concat/convert dirs and no .rds in ${INPUT_RDS_DIR}"
+    exit 1
   fi
 fi
 
