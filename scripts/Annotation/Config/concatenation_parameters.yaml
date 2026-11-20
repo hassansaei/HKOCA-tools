@@ -1,0 +1,29 @@
+# Parameters from concatenate_filtered_singlets.py (atlas_shortcut restart)
+
+script: scripts/concatenate_filtered_singlets.py
+input_dir: /data-master/pure-workspace/labss/hmami/atlas_shortcut/filtered_singlets_harmonized
+output_h5ad: /data-master/pure-workspace/labss/hmami/atlas_shortcut/concatenated_filtered_singlets_important_columns.h5ad
+n_files_concatenated: 22
+n_cells: 934235
+n_genes: 24100
+
+keep_obs_columns:
+  - orig.ident
+  - nCount_RNA
+  - nFeature_RNA
+  - sample_id
+  - study
+  - source
+  - diff_protocol
+  - sc_protocol
+  - sequencing
+  - Age
+
+standardization:
+  sample_id: strip; spaces/dots → underscore; collapse repeated underscores
+  orig.ident: set to standardized sample_id
+  sc_protocol: 10X* → 10x*
+  study: TTC21b → TTC21B
+  barcode_uniqueness: anndata.concat index_unique="_"
+
+join: inner (identical 24,100-gene order required)

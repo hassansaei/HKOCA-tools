@@ -1,0 +1,18 @@
+# Parameters for RDS → h5ad conversion feeding this atlas restart
+# Script: scripts/rds_to_h5ad.r (+ scripts/rds_conversion_job.sh)
+
+method: SeuratDisk SaveH5Seurat → Convert(h5ad)
+seurat_v5_handling: cast Assay5 RNA assay to Assay (v3) before SaveH5Seurat
+
+# Paths actually used for the final QC-filtered objects (not the /test/ paths in the script defaults)
+input_rds_dir: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results_after_harmonization_final/qc_filtered_rds
+output_h5ad_dir: /data-master/pure-workspace/labss/hmami/new_data/HKOCA-tools/scripts/qc/qc_results_after_harmonization_final/qc_filtered_h5ad_converted
+
+# Copied into atlas_shortcut for concatenation
+atlas_shortcut_input_copy: /data-master/pure-workspace/labss/hmami/atlas_shortcut/filtered_singlets_harmonized
+
+sbatch:
+  job_name: conversion
+  cpus_per_task: 8
+  mem: 128G
+  conda_env: atlas
