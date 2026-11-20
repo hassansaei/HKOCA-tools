@@ -1,156 +1,194 @@
+#!/usr/bin/env python3
+"""Aggregate iteration metrics and write scorecard figures.
+
+Reads subsample_iter_*/scib_raw_metrics_full.csv and writes mean/std tables
+plus PNG scorecards under results/ (and checkpoints/ for continuity).
+"""
+from __future__ import annotations
+
 import os
-import sys
-import subprocess
 
 import matplotlib
+import yaml
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from pathlib import Path
 from scipy import stats
 
-try:
-    import yaml
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "-q"])
-    import yaml
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BENCH_DIR = os.path.dirname(SCRIPT_DIR)
+with open(os.path.join(BENCH_DIR, "config.yaml"), encoding="utf-8") as _fh:
+    _CFG = yaml.safe_load(_fh)
+
+CHECKPOINTS = os.path.join(BENCH_DIR, "checkpoints")
+RESULTS = os.path.join(BENCH_DIR, "results")
+N_ITERS = int(_CFG["benchmark"]["n_iters"])
+BIO_KEYS = ["ARI", "NMI", "ASW_celltype", "iso_label_F1", "iso_label_ASW", "cLISI"]
+BATCH_KEYS = ["ASW_batch", "graph_connectivity", "iLISI", "kBET", "PCR"]
 
 
-def load_config():
-    argv = sys.argv[1:]
-    if "--config" in argv:
-        config_file = Path(argv[argv.index("--config") + 1]).resolve()
-    else:
-        config_file = Path(__file__).resolve().parent / "benchmark_config.yaml"
-    with open(config_file, encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+
+def save_both(fig, name: str, dpi: int = 150) -> None:
+    os.makedirs(RESULTS, exist_ok=True)
+    os.makedirs(CHECKPOINTS, exist_ok=True)
+    for outdir in (CHECKPOINTS, RESULTS):
+        fig.savefig(os.path.join(outdir, name), dpi=dpi, bbox_inches="tight")
 
 
-CFG = load_config()
-
-VIZ_CFG = CFG["visualization"]
-METRICS_CFG = CFG["metrics"]
-CHECKPOINT_BASE = CFG["paths"]["checkpoints_dir"]
-N_ITERATIONS = VIZ_CFG["n_iterations"]
-BASELINE_METHOD = VIZ_CFG["baseline_method"]
-BIO_KEYS = METRICS_CFG["bio_keys"]
-BATCH_KEYS = METRICS_CFG["batch_keys"]
-BIO_WEIGHT = METRICS_CFG["bio_weight"]
-BATCH_WEIGHT = METRICS_CFG["batch_weight"]
-
-print("Aggregating benchmark results.")
+print("Aggregating Level_2 benchmark results.")
 
 all_records = []
-for i in range(1, N_ITERATIONS + 1):
-    csv_path = os.path.join(
-        CHECKPOINT_BASE,
-        CFG["iteration"]["checkpoint_subdir_pattern"].format(iter_id=i),
-        METRICS_CFG["output_file"],
-    )
+for i in range(1, N_ITERS + 1):
+    csv_path = os.path.join(CHECKPOINTS, f"subsample_iter_{i}", "scib_raw_metrics_full.csv")
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path)
         all_records.append(df)
+        print(f"  loaded iter {i}: {len(df)} methods")
+    else:
+        print(f"  MISSING iter {i}: {csv_path}")
 
 if not all_records:
-    print("No scIB CSV files found.")
-    exit()
+    raise SystemExit("No scIB CSV files found — abort viz")
 
 iter_df = pd.concat(all_records, ignore_index=True)
-mean_df = iter_df.groupby("method").mean()
-std_df = iter_df.groupby("method").std()
+mean_df = iter_df.groupby("method").mean(numeric_only=True)
+std_df = iter_df.groupby("method").std(numeric_only=True)
 
-mean_df.to_csv(os.path.join(CHECKPOINT_BASE, VIZ_CFG["mean_metrics_file"]))
-std_df.to_csv(os.path.join(CHECKPOINT_BASE, VIZ_CFG["std_metrics_file"]))
+os.makedirs(RESULTS, exist_ok=True)
+for outdir in (CHECKPOINTS, RESULTS):
+    mean_df.to_csv(os.path.join(outdir, "scib_mean_metrics.csv"))
+    std_df.to_csv(os.path.join(outdir, "scib_std_metrics.csv"))
 
-print("\nCalculating Wilcoxon P-values...")
+print("\nWilcoxon P-values...")
 winner_method = mean_df["overall"].idxmax()
 sorted_methods = mean_df["overall"].sort_values(ascending=False).index.tolist()
-competitors = [m for m in sorted_methods if m not in [winner_method, BASELINE_METHOD]]
+competitors = [m for m in sorted_methods if m not in [winner_method, "pca"]]
 runner_up = competitors[0] if competitors else None
 
-COMPARISONS = [(winner_method, BASELINE_METHOD)]
-if runner_up: COMPARISONS.append((winner_method, runner_up))
+comparisons = [(winner_method, "pca")]
+if runner_up:
+    comparisons.append((winner_method, runner_up))
 
-for method_a, method_b in COMPARISONS:
+for method_a, method_b in comparisons:
     df_a = iter_df[iter_df["method"] == method_a].set_index("seed")["overall"]
     df_b = iter_df[iter_df["method"] == method_b].set_index("seed")["overall"]
-    common_seeds = df_a.index.intersection(df_b.index)
-    if len(common_seeds) > 0:
-        W, p = stats.wilcoxon(df_a.loc[common_seeds], df_b.loc[common_seeds], alternative="greater")
-        print(f"  {method_a} > {method_b}: p-value = {p:.4f} (W={W})")
+    common = df_a.index.intersection(df_b.index)
+    if len(common) > 0:
+        W, p = stats.wilcoxon(df_a.loc[common], df_b.loc[common], alternative="greater")
+        print(f"  {method_a} > {method_b}: p={p:.4f} (W={W})")
 
-print("\nGenerating visualizations...")
-bio_metrics = BIO_KEYS
-batch_metrics = BATCH_KEYS
-ALL_COLS = bio_metrics + batch_metrics
+print("\nGenerating figures...")
+all_cols = BIO_KEYS + BATCH_KEYS
 
-heatmap_figsize = tuple(VIZ_CFG["heatmap_figsize"])
-fig, axes = plt.subplots(1, 2, figsize=heatmap_figsize)
-sns.heatmap(mean_df[ALL_COLS], ax=axes[0], annot=True, fmt=".3f", cmap="YlOrRd", vmin=0, vmax=1, linewidths=0.4)
-axes[0].set_title(f"Mean scIB scores ({N_ITERATIONS} iterations)", fontsize=13, fontweight="bold")
-sns.heatmap(std_df[ALL_COLS], ax=axes[1], annot=True, fmt=".3f", cmap="Blues", linewidths=0.4)
-axes[1].set_title("SD (uncertainty)", fontsize=13, fontweight="bold")
+fig, axes = plt.subplots(1, 2, figsize=(24, 7))
+sns.heatmap(mean_df[all_cols], ax=axes[0], annot=True, fmt=".3f", cmap="YlOrRd", vmin=0, vmax=1, linewidths=0.4)
+axes[0].set_title(f"Mean scIB scores ({N_ITERS} iterations)", fontsize=25, fontweight="bold")
+axes[0].tick_params(axis="y", labelsize=20)
+axes[0].tick_params(axis="x", labelsize=20)
+axes[0].set_xticklabels(axes[0].get_xticklabels(), rotation=45, ha="right", fontsize=20)
+axes[0].set_yticklabels(axes[0].get_yticklabels(), rotation=0, fontsize=20)
+for text in axes[0].texts:
+    text.set_fontsize(20)
+
+sns.heatmap(std_df[all_cols], ax=axes[1], annot=True, fmt=".3f", cmap="Blues", linewidths=0.4)
+axes[1].set_title("SD (uncertainty)", fontsize=25, fontweight="bold")
+axes[1].tick_params(axis="y", labelsize=25)
+axes[1].tick_params(axis="x", labelsize=25)
+axes[1].set_xticklabels(axes[1].get_xticklabels(), rotation=45, ha="right", fontsize=20)
+axes[1].set_yticklabels(axes[1].get_yticklabels(), rotation=0, fontsize=20)
+for text in axes[1].texts:
+    text.set_fontsize(20)
+
 plt.tight_layout()
-fig.savefig(os.path.join(CHECKPOINT_BASE, VIZ_CFG["heatmap_file"]), dpi=VIZ_CFG["heatmap_dpi"], bbox_inches="tight")
+save_both(fig, "scib_mean_sd_heatmap_size.png", dpi=150)
 plt.close()
-print(f"  Saved: {VIZ_CFG['heatmap_file']}")
+print("  Saved: scib_mean_sd_heatmap_size.png")
 
-errorbars_figsize = tuple(VIZ_CFG["errorbars_figsize"])
-fig, ax = plt.subplots(figsize=errorbars_figsize)
-ax.bar(sorted_methods, mean_df.loc[sorted_methods, "overall"], yerr=std_df.loc[sorted_methods, "overall"], capsize=5, color="steelblue", edgecolor="white", width=0.6)
-ax.set_ylabel("Overall scIB score  (mean ± SD)", fontsize=11)
-ax.set_title("Integration benchmarking — overall score with uncertainty", fontsize=13)
+fig, ax = plt.subplots(figsize=(14, 10))
+ax.bar(
+    sorted_methods,
+    mean_df.loc[sorted_methods, "overall"],
+    yerr=std_df.loc[sorted_methods, "overall"],
+    capsize=5,
+    color="steelblue",
+    edgecolor="white",
+    width=0.6,
+)
+ax.set_ylabel("scIB score  (mean ± SD)", fontsize=35, fontweight="bold")
+ax.set_title("Integration benchmarking : overall score (Level_2)", fontsize=28, fontweight="bold")
 ax.set_ylim(0, 1)
-plt.xticks(rotation=35, ha="right", fontsize=10)
+ax.tick_params(axis="y", labelsize=35)
+plt.xticks(rotation=35, ha="right", fontsize=35)
 plt.tight_layout()
-fig.savefig(os.path.join(CHECKPOINT_BASE, VIZ_CFG["errorbars_file"]), dpi=VIZ_CFG["errorbars_dpi"], bbox_inches="tight")
+save_both(fig, "scib_overall_errorbars_size.png", dpi=300)
 plt.close()
-print(f"  Saved: {VIZ_CFG['errorbars_file']}")
+print("  Saved: scib_overall_errorbars_size.png")
 
 plot_df = mean_df.copy()
-plot_df[f"Bio Score ({int(BIO_WEIGHT * 100)}%)"] = mean_df[bio_metrics].mean(axis=1)
-plot_df[f"Batch Score ({int(BATCH_WEIGHT * 100)}%)"] = mean_df[batch_metrics].mean(axis=1)
+plot_df["Bio Score (60%)"] = mean_df[BIO_KEYS].mean(axis=1)
+plot_df["Batch Score (40%)"] = mean_df[BATCH_KEYS].mean(axis=1)
 plot_df = plot_df.rename(columns={"overall": "Overall Score"}).sort_values("Overall Score", ascending=False)
 
-bio_col = f"Bio Score ({int(BIO_WEIGHT * 100)}%)"
-batch_col = f"Batch Score ({int(BATCH_WEIGHT * 100)}%)"
-score_cols = [bio_col, batch_col, "Overall Score"]
-
 plot_norm = plot_df.copy()
-for col in bio_metrics + batch_metrics + score_cols:
+for col in BIO_KEYS + BATCH_KEYS + ["Bio Score (60%)", "Batch Score (40%)", "Overall Score"]:
     cmin, cmax = plot_df[col].min(), plot_df[col].max()
     plot_norm[col] = (plot_df[col] - cmin) / (cmax - cmin) if cmax - cmin > 1e-9 else 1.0
 
-scorecard_figsize = tuple(VIZ_CFG["scorecard_figsize"])
-fig, axes = plt.subplots(1, 4, figsize=scorecard_figsize, gridspec_kw={'width_ratios': VIZ_CFG["scorecard_width_ratios"]})
+fig, axes = plt.subplots(1, 4, figsize=(26, 9), gridspec_kw={"width_ratios": [6, 5, 2, 1.2]})
 plt.subplots_adjust(wspace=0.08)
-kws = {"fmt": ".3f", "linewidths": 0.5, "annot_kws": {"size": 11}}
+kws = {"fmt": ".3f", "linewidths": 0.5, "annot_kws": {"size": 20}}
 
-sns.heatmap(data=plot_norm[bio_metrics], annot=plot_df[bio_metrics], cmap="Blues", ax=axes[0], cbar=False, **kws)
-axes[0].set_title("Biological Conservation", fontsize=15, fontweight="bold", pad=15)
-axes[0].set_ylabel("Integration Method", fontsize=14, fontweight="bold")
-axes[0].tick_params(axis='y', rotation=0, labelsize=12)
-axes[0].set_xticklabels(axes[0].get_xticklabels(), rotation=45, ha='right')
+sns.heatmap(data=plot_norm[BIO_KEYS], annot=plot_df[BIO_KEYS], cmap="Blues", ax=axes[0], cbar=False, **kws)
+axes[0].set_title("Biological Conservation", fontsize=25, fontweight="bold", pad=15)
+axes[0].set_ylabel("Integration Method", fontsize=25, fontweight="bold")
+axes[0].tick_params(axis="y", rotation=0, labelsize=20)
+axes[0].tick_params(axis="x", labelsize=20)
+axes[0].set_xticklabels(axes[0].get_xticklabels(), rotation=45, ha="right", fontsize=20)
 
-sns.heatmap(data=plot_norm[batch_metrics], annot=plot_df[batch_metrics], cmap="Oranges", ax=axes[1], cbar=False, **kws)
-axes[1].set_title("Batch Correction", fontsize=15, fontweight="bold", pad=15)
-axes[1].set_yticks([]); axes[1].set_ylabel("")
-axes[1].set_xticklabels(axes[1].get_xticklabels(), rotation=45, ha='right')
+sns.heatmap(data=plot_norm[BATCH_KEYS], annot=plot_df[BATCH_KEYS], cmap="Oranges", ax=axes[1], cbar=False, **kws)
+axes[1].set_title("Batch Correction", fontsize=25, fontweight="bold", pad=15)
+axes[1].set_yticks([])
+axes[1].set_ylabel("")
+axes[1].tick_params(axis="x", labelsize=20)
+axes[1].set_xticklabels(axes[1].get_xticklabels(), rotation=45, ha="right", fontsize=20)
 
-sns.heatmap(data=plot_norm[[bio_col, batch_col]], annot=plot_df[[bio_col, batch_col]], cmap="Greens", ax=axes[2], cbar=False, **kws)
-axes[2].set_title("Category Scores", fontsize=15, fontweight="bold", pad=15)
-axes[2].set_yticks([]); axes[2].set_ylabel("")
-axes[2].set_xticklabels(axes[2].get_xticklabels(), rotation=45, ha='right')
+sns.heatmap(
+    data=plot_norm[["Bio Score (60%)", "Batch Score (40%)"]],
+    annot=plot_df[["Bio Score (60%)", "Batch Score (40%)"]],
+    cmap="Greens",
+    ax=axes[2],
+    cbar=False,
+    **kws,
+)
+axes[2].set_title("Category Scores", fontsize=25, fontweight="bold", pad=15)
+axes[2].set_yticks([])
+axes[2].set_ylabel("")
+axes[2].tick_params(axis="x", labelsize=20)
+axes[2].set_xticklabels(axes[2].get_xticklabels(), rotation=45, ha="right", fontsize=20)
 
-sns.heatmap(data=plot_norm[["Overall Score"]], annot=plot_df[["Overall Score"]], cmap="Reds", ax=axes[3], cbar=True, **kws)
-axes[3].set_title("Overall", fontsize=15, fontweight="bold", pad=15)
-axes[3].set_yticks([]); axes[3].set_ylabel("")
+sns.heatmap(
+    data=plot_norm[["Overall Score"]],
+    annot=plot_df[["Overall Score"]],
+    cmap="Reds",
+    ax=axes[3],
+    cbar=True,
+    **kws,
+)
+axes[3].set_title("Overall", fontsize=25, fontweight="bold", pad=15)
+axes[3].set_yticks([])
+axes[3].set_ylabel("")
+axes[3].tick_params(axis="x", labelsize=20)
+axes[3].set_xticklabels(axes[3].get_xticklabels(), rotation=45, ha="right", fontsize=20)
 
-plt.suptitle("HKOCA Integration Benchmark Master Scorecard", fontsize=22, fontweight="bold", y=1.03)
-fig.savefig(os.path.join(CHECKPOINT_BASE, VIZ_CFG["scorecard_file"]), dpi=VIZ_CFG["scorecard_dpi"], bbox_inches="tight")
+for ax in axes:
+    for text in ax.texts:
+        text.set_fontsize(20)
+
+plt.suptitle("HKOCA Integration Benchmark — Level_2 Master Scorecard", fontsize=32, fontweight="bold", y=1.03)
+save_both(fig, "MASTER_SCORECARD_size.png", dpi=300)
 plt.close()
-print(f"  Saved: {VIZ_CFG['scorecard_file']}")
-
+print("  Saved: MASTER_SCORECARD_size.png")
 print("\nAll visualizations generated successfully.")
