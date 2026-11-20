@@ -212,7 +212,7 @@ def parse_args():
     )
     p.add_argument(
         "--markers",
-        default="/data-master/pure-workspace/labss/hmami/atlas_shortcut_new_start/Organization/annotation_pipeline/markers/snapseed_markers_v5.yaml",
+        default="/data-master/pure-workspace/labss/hmami/atlas_shortcut_new_start/Organization/annotation/markers/snapseed_markers_v5.yaml",
     )
     p.add_argument(
         "--outdir",
