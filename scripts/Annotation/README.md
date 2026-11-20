@@ -38,7 +38,7 @@ Annotation/
 ├── README.md
 ├── scripts/          # pipeline code + scheduler
 ├── config/           # paths and parameters (YAML)
-└── markers/          # snapseed_markers_v5.yaml
+└── snapseed_markers_v5.yaml
 ```
 
 ---
