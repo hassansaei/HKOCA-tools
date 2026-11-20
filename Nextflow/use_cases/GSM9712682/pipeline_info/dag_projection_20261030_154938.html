@@ -1,0 +1,110 @@
+<!--
+  ~ Copyright 2013-2026, Seqera Labs
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~     http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+<html>
+<head>
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, maximum-scale=1">
+</head>
+<body>
+<pre class="mermaid" style="text-align: center;">
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#B6ECE2',
+      'primaryTextColor': '#160F26',
+      'primaryBorderColor': '#065647',
+      'lineColor': '#545555',
+      'clusterBkg': '#BABCBD22',
+      'clusterBorder': '#DDDEDE',
+      'fontFamily': 'arial'
+    }
+  }
+}%%
+flowchart TB
+    subgraph " "
+    v0["channel.fromPath"]
+    v1["channel.fromPath"]
+    v2["channel.fromPath"]
+    v3["channel.fromPath"]
+    v7["channel.fromPath"]
+    end
+    subgraph " "
+    v6["samples_ch"]
+    v9[" "]
+    v11[" "]
+    v12["harmonize_rds"]
+    v14[" "]
+    v15[" "]
+    v17[" "]
+    v18[" "]
+    v24[" "]
+    v25[" "]
+    v26[" "]
+    v31[" "]
+    v32["projected"]
+    v33[" "]
+    end
+    subgraph "HKOCA [HKOCA]"
+    v8(["PREPARE_HARMONIZE_META"])
+    v10(["HARMONIZATION"])
+    v13(["QC"])
+    v16(["ANNOTATION"])
+    v23(["INTEGRATION"])
+    v30(["PROJECTION"])
+    v4(( ))
+    v19(( ))
+    v27(( ))
+    v28(( ))
+    v29(( ))
+    end
+    v0 --> v8
+    v0 --> v4
+    v1 --> v10
+    v2 --> v28
+    v3 --> v29
+    v4 --> v6
+    v7 --> v8
+    v8 --> v10
+    v8 --> v9
+    v10 --> v13
+    v10 --> v12
+    v10 --> v11
+    v13 --> v15
+    v13 --> v16
+    v13 --> v14
+    v13 --> v19
+    v16 --> v18
+    v16 --> v17
+    v16 --> v19
+    v19 --> v23
+    v23 --> v26
+    v23 --> v25
+    v23 --> v24
+    v23 --> v27
+    v27 --> v30
+    v28 --> v30
+    v29 --> v30
+    v30 --> v33
+    v30 --> v32
+    v30 --> v31
+
+</pre>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, maxTextSize: Number.MAX_SAFE_INTEGER, maxEdges: Number.MAX_SAFE_INTEGER });
+</script>
+</body>
+</html>

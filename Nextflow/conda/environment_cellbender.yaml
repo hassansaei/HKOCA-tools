@@ -1,0 +1,18 @@
+name: hkoca_cellbender
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # CellBender 0.3.2 is validated on Python 3.10
+  - python=3.10
+  - pip
+
+  # GPU PyTorch + CellBender (mirrors conda/cellbender_v0.3.2_updated.def)
+  # Requires a host NVIDIA driver compatible with CUDA 11.7/11.8.
+  # Torch bundles its own CUDA runtime libs; no system CUDA toolkit needed
+  # unless your cluster policy requires module load.
+  - pip:
+      - --extra-index-url=https://download.pytorch.org/whl/cu117
+      - "numpy<2"
+      - torch==1.13.1+cu117
+      - cellbender==0.3.2
