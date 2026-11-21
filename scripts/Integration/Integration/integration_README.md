@@ -28,7 +28,7 @@ The integrated object carries the scPoli latent (`X_emb`), PCA and scPoli UMAPs,
 ## Layout
 
 ```text
-scpoli/
+integration/
 ├── README.md
 ├── config.yaml
 └── run_scpoli_integration.py
