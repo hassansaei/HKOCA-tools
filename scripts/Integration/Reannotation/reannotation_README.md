@@ -1,257 +1,40 @@
-# HKOCA Level 3 Reannotation
+# Post-integration reannotation
 
-Documentation for the high-resolution reannotation pipeline in `scripts_benchmark/push/`. This step runs on the scPoli-integrated atlas to refine Level_3 labels via Leiden clustering at resolution 10.0, propagate Level_2 and Level_1 labels, and validate cell type structure with marker genes.
+Snapseed assigns Level_1 / Level_2 / Level_3 from marker scores on pre-integration clusters. That works well at atlas scale, but it is not 100% accurate: some clusters mix lineages or states that markers alone mislabel. After scPoli, Leiden within each lineage resolves those pockets more clearly, so a manual reannotation step is needed to correct them on the integrated object (without retraining the model).
 
-The push copy is config-driven and logic-identical to `parameters/reannotation/reannotate_res10.py`. The original file is not modified.
+`run_reannotation.py` applies the agreed remaps and writes a new reannotated `.h5ad`. The source integrated file is left untouched.
 
----
+## Cluster remaps
 
-## Table of contents
+| Lineage → cluster | n | To (L1 / L2 / L3) | Why |
+|---|---:|---|---|
+| Stromal_cells · 13 | 14,413 | Nephron / NPC / NPC | Strong Nephron markers (PAX2/8, EPCAM, LYPD1); low stromal |
+| Off_target_cells · 10 | 8,252 | Nephron / Proliferative_nephron | PAX2/8 + high cycle markers; not off-target |
+| Nephron · 2_sub0 | 7,439 | Stromal_cells / S2 | Stromal signature (PDGFRA, COL14A1); negative Nephron score |
+| Nephron · 14 | 6,143 | Nephron / Proliferative_nephron | Highest proliferation in Nephron + PAX2/8 |
+| Nephron · 2_sub1 | 5,581 | Nephron / Proliferative_nephron | PAX2/8 + cycle markers; no stromal/segmental signal |
+| Nephron · 2_sub2 | 5,237 | Nephron / NPC | Retained as NPC (PAX2/8, EPCAM, LYPD1) |
+| Stromal_cells · 20 | 4,305 | Nephron / NPC | Strong Nephron score; kept NPC (not prolif.) due to CDH6/LYPD1 |
+| Nephron · 19 | 3,969 | Nephron / Proliferative_nephron | Clean PAX2/8 + cycle markers; segmental ~0 |
+| Nephron · 25 | 2,006 | Off_target_cells | Negative Nephron score; mixed neural/off-target |
+| Off_target_cells · 29 | 1,448 | Stromal_cells / S2 | Strong PDGFRA / COL14A1 / PRRX1 |
+| Stromal_cells · 26 | 110 | Ureteric_Epithelium / Collecting_duct | AQP2 / GATA3 / EPCAM |
+| undifferentiated · 32 | 93 | Endothelial_cells | KDR / PECAM1; no pluripotency markers |
+| Off_target_cells · 34 | 37 | Nephron / Proximal_tubule / Dev_PT | CUBN / LRP2 / PAX2/8 |
+| Off_target_cells · 35 | 27 | Endothelial_cells | KDR / PECAM1 |
 
-1. [Motivation](#motivation)
-2. [Overview](#overview)
-3. [Directory layout](#directory-layout)
-4. [Workflow](#workflow)
-5. [Script reference](#script-reference)
-6. [Configuration](#configuration)
-7. [Outputs](#outputs)
-8. [Usage](#usage)
-9. [Requirements](#requirements)
-10. [Troubleshooting](#troubleshooting)
+Nephron cluster 2 was split on `X_emb` into three subclusters because stromal and proliferative programs were segregated inside that cluster.
 
----
+## Layout
 
-## Motivation
-
-After scPoli integration, cell type labels from the pre-integration annotation may not fully reflect the integrated embedding structure. High-resolution clustering on `X_emb` identifies micro-clusters whose dominant Level_3 label can differ from the original assignment. Majority-vote relabeling per micro-cluster produces integrated annotation columns (`Level_3_Integrated`, `Level_2_Integrated`, `Level_1_Integrated`) that are consistent with the batch-corrected representation.
-
-Marker gene analysis on a 100k-cell subset provides a QC check that integrated labels remain biologically coherent.
-
----
-
-## Overview
-
-```
-reannotation_config.yaml
-        |
-        v
-reannotate_res10.py --config reannotation_config.yaml
-        |
-        +-- Load integrated atlas
-        +-- Neighbors + Leiden (resolution = 10, use_rep = X_emb)
-        +-- Majority-vote Level_3 assignment per micro-cluster
-        +-- Propagate Level_2 and Level_1 from Level_3 maps
-        +-- Wilcoxon DEGs on 100k subset
-        +-- Hierarchical marker matrix plot
-        +-- Save reannotated .h5ad
+```text
+reannotation/
+├── README.md
+└── run_reannotation.py
 ```
 
-**Prerequisite:** scPoli integration must be completed first. Input is `Master_Atlas_scPoli_Level2_Integrated_parameters.h5ad` with `X_emb` in `adata.obsm`.
-
----
-
-## Directory layout
-
-```
-push/
-├── environment.yml              # Shared conda environment (see Requirements)
-├── reannotation_README.md       # This file
-├── reannotation_config.yaml     # Central configuration
-└── reannotate_res10.py          # Reannotation script
-```
-
-Default output paths point to `parameters/` and `parameters/reannotation/figures/`, matching the original layout.
-
----
-
-## Workflow
-
-### Step 1: Neighborhood graph and Leiden clustering
-
-Build a kNN graph on the integrated embedding (`X_emb`, 30 neighbors) and run Leiden clustering at resolution 10.0. This produces many high-resolution micro-clusters stored in `leiden_res_10`.
-
-### Step 2: Dominant cell type assignment
-
-For each micro-cluster, assign the mode of `Level_3_latest` as the new Level_3 label. Build Level_3-to-Level_2 and Level_3-to-Level_1 maps from the original annotations (mode per Level_3), then propagate to produce `Level_2_Integrated` and `Level_1_Integrated`.
-
-### Step 3: Marker gene refinement
-
-Subsample 100,000 cells, run Wilcoxon rank-sum tests grouped by `Level_3_Integrated`, extract top-10 markers per cell type, compute a dendrogram, and render a hierarchical matrix plot.
-
-### Step 4: Save
-
-Write the full atlas with new integrated annotation columns to disk.
-
----
-
-## Script reference
-
-### `reannotate_res10.py`
-
-| Aspect | Detail |
-|--------|--------|
-| Original | `parameters/reannotation/reannotate_res10.py` |
-| Config | `reannotation_config.yaml` (default) or `--config /path/to/config.yaml` |
-| Input | Integrated atlas with `X_emb`, `Level_3_latest`, `Level_2`, `Level_1` |
-| RAM | Full atlas loaded into memory |
-
-Differences from the original script:
-
-- Paths and parameters moved to YAML config
-- Emojis and decorative comments removed
-- `--config` flag support added
-
-All processing logic is unchanged.
-
----
-
-## Configuration
-
-### Config file: `reannotation_config.yaml`
-
-| Section | Purpose |
-|---------|---------|
-| `paths` | Input integrated atlas, output h5ad, figure directory |
-| `clustering` | Neighbors and Leiden parameters on `X_emb` |
-| `annotation` | Source and output metadata column names |
-| `marker_refinement` | Subset size, Wilcoxon test settings |
-| `plotting` | Matrix plot appearance and filename |
-
-### Full config reference
-
-```yaml
-paths:
-  input_h5ad: .../Master_Atlas_scPoli_Level2_Integrated_parameters.h5ad
-  output_h5ad: .../Master_Atlas_scPoli_Integrated_Reannotated.h5ad
-  figure_dir: .../reannotation/figures
-
-clustering:
-  use_rep: X_emb
-  n_neighbors: 30
-  random_state: 42
-  resolution: 10.0
-  leiden_key: leiden_res_10
-
-annotation:
-  source_level3: Level_3_latest
-  source_level2: Level_2
-  source_level1: Level_1
-  output_level3: Level_3_Integrated
-  output_level2: Level_2_Integrated
-  output_level1: Level_1_Integrated
-
-marker_refinement:
-  n_subset: 100000
-  random_state: 42
-  groupby: Level_3_Integrated
-  method: wilcoxon
-  n_top_genes: 10
-  use_raw: false
-  pts: true
-
-plotting:
-  dpi: 300
-  facecolor: white
-  cmap: Blues
-  standard_scale: var
-  title: Top 10 Marker Genes Hierarchical Clustering
-  matrixplot_filename: Hierarchical_Marker_Genes_Refinement.png
-```
-
-### Example: write output to a new file
-
-Do not overwrite existing source `.h5ad` files. Use a distinct output filename:
-
-```yaml
-paths:
-  output_h5ad: /path/to/Master_Atlas_scPoli_Integrated_Reannotated_v2.h5ad
-```
-
----
-
-## Outputs
-
-| File | Location | Description |
-|------|----------|-------------|
-| `Master_Atlas_scPoli_Integrated_Reannotated.h5ad` | `parameters/` (default) | Full atlas with integrated annotation columns |
-| `Hierarchical_Marker_Genes_Refinement.png` | `parameters/reannotation/figures/` (default) | Top-10 marker genes per cell type with dendrogram |
-
-### New observation columns
-
-| Column | Description |
-|--------|-------------|
-| `leiden_res_10` | High-resolution Leiden cluster ID |
-| `Level_3_Integrated` | Majority-vote Level_3 label per micro-cluster |
-| `Level_2_Integrated` | Level_2 propagated from Level_3 map |
-| `Level_1_Integrated` | Level_1 propagated from Level_3 map |
-
----
-
-## Usage
+## How to run
 
 ```bash
-cd scripts_benchmark/push
-
-python reannotate_res10.py --config reannotation_config.yaml
+python run_reannotation.py
 ```
-
-With default config (omit `--config`):
-
-```bash
-python reannotate_res10.py
-```
-
----
-
-## Requirements
-
-### Environment setup
-
-Use the shared `environment.yml` (same env as the benchmark and scPoli integration):
-
-```bash
-conda env create -f environment.yml
-conda activate hkoca_integration
-```
-
-### Python
-
-| Package | Required |
-|---------|----------|
-| scanpy | Yes |
-| anndata | Yes |
-| pandas | Yes |
-| numpy | Yes |
-| matplotlib | Yes |
-| pyyaml | Yes |
-
-### Hardware
-
-| Resource | Recommendation |
-|----------|----------------|
-| GPU | Not required |
-| RAM | 300+ GB (full atlas loaded into RAM) |
-
----
-
-## Troubleshooting
-
-**`X_emb` not found**
-
-Run scPoli integration first. The script expects the integrated embedding in `adata.obsm['X_emb']`.
-
-**Out of memory on load**
-
-The full atlas is loaded into RAM. Run on a high-memory node or reduce atlas size upstream.
-
-**High relabel rate**
-
-Expected at resolution 10.0. Review `Hierarchical_Marker_Genes_Refinement.png` to confirm marker coherence across integrated labels.
-
-**Missing source columns**
-
-Ensure `Level_3_latest`, `Level_2`, and `Level_1` exist in `adata.obs` before running.
-
-**Wilcoxon test fails on subset**
-
-Confirm the subset retains multiple cells per `Level_3_Integrated` category. Very rare types may need a larger `n_subset` or manual review.
