@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 import h5py
@@ -57,7 +58,9 @@ DIRS = {
     "03_tab": ROOT / "03_similarity_score/tables",
 }
 
-RSCRIPT = Path("/data-master/pure-workspace/hmami/conda_envs/atlas/bin/Rscript")
+# Prefer Rscript from the active conda env (see organoid_vs_primary_atlas/environment.yml)
+_RSCRIPT = shutil.which("Rscript")
+RSCRIPT = Path(_RSCRIPT) if _RSCRIPT else Path("Rscript")
 EDGER_R = ROOT / "scripts/r/edger_qlf_org_vs_primary.R"
 
 # Protocols merged into the 3 major protocols for DEG / protocol comparisons
