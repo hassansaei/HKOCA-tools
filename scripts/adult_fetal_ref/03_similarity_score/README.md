@@ -9,7 +9,7 @@ Presence and DE say which niches are occupied and which genes differ. Similarity
 **Gene sets.** Two complementary gene panels are used:
 
 - **HVG** — top 2,000 highly variable genes on the reference log₂-CPM matrix (with a light expression floor), so the correlation reflects the main axes of variation in primary tissue  
-- **TF** — human transcription-factor genes from the Lambert list (local copy: `TF_names_Lambert_v1.01.csv` / `.txt` in this folder), to emphasize regulatory state rather than effector programs  
+- **TF** — human transcription-factor genes from the Lambert list (local copy: `TF_names_Lambert_v1.01.csv` / `.txt` in this folder), to emphasize regulatory state rather than effector programs. Original list : [https://humantfs.ccbr.utoronto.ca/allTFs.php]
 
 **Similarity.** For every organoid type × primary type pair we compute Spearman correlation of the two log₂-CPM vectors on the shared genes in each panel. Full matrices are shown as heatmaps (HVG and TF) against adult and fetal.
 
