@@ -43,4 +43,13 @@ Details: [`03_similarity_score/README.md`](03_similarity_score/README.md)
 | `wknn_mapping/` | Weighted kNN soft landing and label transfer |
 | `r/edger_qlf_org_vs_primary.R` | edgeR QLF model called from the DE Python wrapper |
 
-Run scripts from the project root (`organoid_vs_primary_atlas/`’s parent, or as documented in each section) so relative imports resolve. Prefer the same conda env used for the atlas analyses (`atlas`).
+## Environment
+
+Python + R dependencies are listed in [`../environment.yml`](../environment.yml) (env name: `organoid_vs_primary`). Versions match the stack used to generate the figures (scanpy, gseapy, edgeR, etc.).
+
+```bash
+conda env create -f organoid_vs_primary_atlas/environment.yml
+conda activate organoid_vs_primary
+```
+
+Run scripts from the repo root so imports resolve (`scripts/` is on `sys.path` from each section script). `Rscript` must be on `PATH` (it is, after activating this env) for the edgeR DE step.
