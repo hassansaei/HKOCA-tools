@@ -8,7 +8,8 @@ suppressPackageStartupMessages({
   library(DevKidCC)
 })
 
-ROOT <- "/data-master/pure-workspace/labss/hmami/atlas_shortcut_new_start/fetal_new_3_datasets"
+# Local paths under organoid_vs_primary_atlas (no other project folders)
+ROOT <- "/data-master/pure-workspace/labss/hmami/atlas_shortcut_new_start/organoid_vs_primary_atlas/00_reference_umaps/inputs/fetal"
 RAW <- file.path(ROOT, "tran_raw")
 OUT <- file.path(ROOT, "devkidcc_tran")
 dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
