@@ -27,8 +27,8 @@ PATHS = {
     / "organoid_on_primary_projection/01_reference/fetal_counts_shared.h5ad",
     "fetal_umap": WORKSPACE
     / "organoid_on_primary_projection/01_reference/fetal_scANVI_latent_umap.h5ad",
-    "fetal_harmony": WORKSPACE
-    / "fetal_new_3_datasets/integrated_weeks_9_17/fetal_weeks_9_17_harmony_integrated.h5ad",
+    "fetal_harmony": ROOT
+    / "00_reference_umaps/objects/fetal_weeks_9_17_harmony_integrated.h5ad",
     # Organoid atlas & projections onto adult and fetal references (847,399 cells)
     "organoid_counts": WORKSPACE
     / "organoid_on_primary_projection/02_query/organoid_counts_shared.h5ad",
